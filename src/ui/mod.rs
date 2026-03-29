@@ -259,7 +259,7 @@ fn draw_context_panel(f: &mut Frame, app: &App, area: Rect) {
     // Split: left = sparkline graph, right = context bars
     let halves = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(inner);
 
     // ── Left: token rate braille sparkline graph ──
@@ -814,7 +814,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
                 )),
                 Cell::from(Span::styled(status_icon, Style::default().fg(status_color))),
                 Cell::from(Span::styled(
-                    truncate_str(&model_short, 8),
+                    truncate_str(&model_short, 10),
                     Style::default().fg(GRAPH_TEXT),
                 )),
                 Cell::from(Span::styled(
@@ -894,7 +894,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(9),   // session id (8 chars + pad)
         Constraint::Min(10),     // summary (fills remaining space)
         Constraint::Length(6),   // status
-        Constraint::Length(6),   // model
+        Constraint::Length(10),  // model
         Constraint::Length(7),   // context
         Constraint::Length(7),   // tokens
         Constraint::Length(5),   // mem
