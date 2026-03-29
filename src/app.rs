@@ -193,9 +193,17 @@ impl App {
     }
 
     /// Get the display summary for a session: LLM summary > "..." if pending > raw prompt > "—"
+    /// Done sessions skip pending state to avoid stuck "..." display.
     pub fn session_summary(&self, session: &AgentSession) -> String {
         if let Some(summary) = self.summaries.get(&session.session_id) {
             summary.clone()
+        } else if matches!(session.status, SessionStatus::Done) {
+            // Done sessions: don't wait for pending summary, show fallback immediately
+            if !session.initial_prompt.is_empty() {
+                sanitize_fallback(&session.initial_prompt, 28)
+            } else {
+                "—".to_string()
+            }
         } else if self.pending_summaries.contains(&session.session_id) {
             "...".to_string()
         } else if !session.initial_prompt.is_empty() {
