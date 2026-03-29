@@ -148,6 +148,79 @@ fn braille_sparkline(data: &[f64], width: usize, gradient: &[Color; 101]) -> Vec
     spans
 }
 
+// ── multi-row braille area graph (btop-style filled CPU graph) ──────────────
+
+/// Render a multi-row braille area graph. `data` values are 0.0–1.0.
+/// Returns one Vec<Span> per terminal row (top to bottom).
+fn braille_graph_multirow(
+    data: &[f64],
+    width: usize,
+    height: usize,
+    gradient: &[Color; 101],
+) -> Vec<Vec<Span<'static>>> {
+    if height == 0 || width == 0 {
+        return vec![vec![]; height];
+    }
+
+    let total_vres = height * 4; // vertical resolution in braille dots
+    let needed = width * 2; // 2 data points per braille character
+
+    let sampled: Vec<f64> = if data.len() >= needed {
+        data[data.len() - needed..].to_vec()
+    } else {
+        let mut v = vec![0.0; needed - data.len()];
+        v.extend_from_slice(data);
+        v
+    };
+
+    let heights: Vec<usize> = sampled
+        .iter()
+        .map(|&v| (v.clamp(0.0, 1.0) * total_vres as f64).round() as usize)
+        .collect();
+
+    // Braille dot bits — bottom-to-top within each cell:
+    // Left col:  row0(bottom)=0x40, row1=0x04, row2=0x02, row3(top)=0x01
+    // Right col: row0(bottom)=0x80, row1=0x20, row2=0x10, row3(top)=0x08
+    let left_bits: [u32; 4] = [0x40, 0x04, 0x02, 0x01];
+    let right_bits: [u32; 4] = [0x80, 0x20, 0x10, 0x08];
+
+    let mut rows: Vec<Vec<Span<'static>>> = Vec::with_capacity(height);
+
+    for row in 0..height {
+        let mut spans = Vec::with_capacity(width);
+        let inv_row = height - 1 - row; // row 0 in output = top of graph
+        let base_y = inv_row * 4;
+
+        for col in 0..width {
+            let left_h = heights[col * 2];
+            let right_h = heights[col * 2 + 1];
+
+            let mut pattern: u32 = 0;
+            for dot_row in 0..4u32 {
+                let y_pos = base_y + dot_row as usize;
+                if left_h > y_pos {
+                    pattern |= left_bits[dot_row as usize];
+                }
+                if right_h > y_pos {
+                    pattern |= right_bits[dot_row as usize];
+                }
+            }
+
+            let ch = char::from_u32(0x2800 + pattern).unwrap_or(' ');
+            let max_val = sampled[col * 2].max(sampled[col * 2 + 1]);
+            let color = if pattern == 0 {
+                GRAPH_TEXT
+            } else {
+                grad_at(gradient, max_val * 100.0)
+            };
+            spans.push(Span::styled(ch.to_string(), Style::default().fg(color)));
+        }
+        rows.push(spans);
+    }
+
+    rows
+}
+
 // ── btop-style block with notch title: ──┐¹title┌────── ─────────────────────
 
 fn btop_block(title: &str, number: &str, box_color: Color) -> Block<'static> {
@@ -274,38 +347,38 @@ fn draw_context_sparkline(f: &mut Frame, app: &App, area: Rect, cpu_grad: &[Colo
     let avail_w = area.width as usize;
     let mut lines: Vec<Line> = Vec::new();
 
-    // Token rate sparkline (fills most of the height)
     let spark_w = avail_w.saturating_sub(2).max(4);
     let rates: Vec<f64> = app.token_rates.iter().copied().collect();
     let max_rate = rates.iter().cloned().fold(1.0_f64, f64::max);
     let normalized: Vec<f64> = rates.iter().map(|&v| v / max_rate).collect();
 
-    // Graph title
-    lines.push(Line::from(vec![
-        Span::styled(" Tokens/tick", Style::default().fg(GRAPH_TEXT)),
-    ]));
-
-    // Render sparkline across available rows using braille
-    let graph_h = avail_h.saturating_sub(2); // title + summary line
-    for row in 0..graph_h {
-        // Each row shows a horizontal slice of the sparkline
-        // For simplicity, render the full sparkline on the first graph row
-        if row == 0 {
-            let mut spark_spans = vec![Span::styled(" ", Style::default())];
-            spark_spans.extend(braille_sparkline(&normalized, spark_w, cpu_grad));
-            lines.push(Line::from(spark_spans));
-        } else {
-            lines.push(Line::from(""));
-        }
-    }
-
-    // Summary line: total tokens + rate
-    let total_tokens: u64 = app.sessions.iter().map(|s| s.total_tokens()).sum();
+    // Graph title with current rate (btop-style)
     let ticks_per_min = 30usize;
     let tokens_per_min: f64 = rates.iter().rev().take(ticks_per_min).sum();
+    let current_pct = normalized.last().copied().unwrap_or(0.0) * 100.0;
+    let pct_color = grad_at(cpu_grad, current_pct);
+    lines.push(Line::from(vec![
+        Span::styled(" Token Rate", Style::default().fg(GRAPH_TEXT)),
+        Span::styled(
+            format!("  {}/min", fmt_tokens(tokens_per_min as u64)),
+            Style::default().fg(pct_color),
+        ),
+    ]));
+
+    // Multi-row braille area graph (fills available height minus title + summary)
+    let graph_h = avail_h.saturating_sub(2).max(1);
+    let graph_rows = braille_graph_multirow(&normalized, spark_w, graph_h, cpu_grad);
+    for row_spans in graph_rows {
+        let mut line_spans = vec![Span::styled(" ", Style::default())];
+        line_spans.extend(row_spans);
+        lines.push(Line::from(line_spans));
+    }
+
+    // Summary line: total tokens
+    let total_tokens: u64 = app.sessions.iter().map(|s| s.total_tokens()).sum();
     lines.push(Line::from(vec![
         Span::styled(format!(" {}", fmt_tokens(total_tokens)), Style::default().fg(MAIN_FG)),
-        Span::styled(format!(" {}/m", fmt_tokens(tokens_per_min as u64)), Style::default().fg(GRAPH_TEXT)),
+        Span::styled(" total", Style::default().fg(GRAPH_TEXT)),
     ]));
 
     f.render_widget(Paragraph::new(lines), area);
@@ -403,15 +476,29 @@ fn draw_quota_panel(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(Span::styled("  abtop --setup", Style::default().fg(GRAPH_TEXT))));
     } else {
         let bar_w = avail_w.saturating_sub(12).min(12).max(3);
+        let multi_source = app.rate_limits.len() > 1;
         for rl in &app.rate_limits {
-            let fresh_str = rl.updated_at.map(|ts| {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
-                let ago = now.saturating_sub(ts);
-                if ago < 60 { format!("{}s ago", ago) } else { format!("{}m ago", ago / 60) }
-            }).unwrap_or_default();
-            if !fresh_str.is_empty() {
-                lines.push(Line::from(Span::styled(format!(" {}", fresh_str), Style::default().fg(INACTIVE_FG))));
+            // Show source label when multiple backends are present
+            if multi_source {
+                let fresh_str = rl.updated_at.map(|ts| {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                    let ago = now.saturating_sub(ts);
+                    if ago < 60 { format!(" {}s ago", ago) } else { format!(" {}m ago", ago / 60) }
+                }).unwrap_or_default();
+                let label = format!(" {}{}", rl.source.to_uppercase(), fresh_str);
+                lines.push(Line::from(Span::styled(label, Style::default().fg(TITLE).add_modifier(Modifier::BOLD))));
+            } else {
+                let fresh_str = rl.updated_at.map(|ts| {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                    let ago = now.saturating_sub(ts);
+                    if ago < 60 { format!("{}s ago", ago) } else { format!("{}m ago", ago / 60) }
+                }).unwrap_or_default();
+                if !fresh_str.is_empty() {
+                    lines.push(Line::from(Span::styled(format!(" {}", fresh_str), Style::default().fg(INACTIVE_FG))));
+                }
             }
+            // Cap lines per source so panel doesn't overflow
+            if lines.len() >= avail_h.saturating_sub(3) { break; }
             if let Some(pct) = rl.five_hour_pct {
                 let reset = rl.five_hour_resets_at.map(|ts| format_reset_time(ts)).unwrap_or_default();
                 let c = grad_at(&cpu_grad, pct);
@@ -448,7 +535,7 @@ fn draw_quota_panel(f: &mut Frame, app: &App, area: Rect) {
     }
     lines.push(Line::from(vec![
         Span::styled(format!(" {}", fmt_tokens(total_tokens)), Style::default().fg(MAIN_FG)),
-        Span::styled(format!(" {}/m", fmt_tokens(tokens_per_min as u64)), Style::default().fg(GRAPH_TEXT)),
+        Span::styled(format!(" {}/min", fmt_tokens(tokens_per_min as u64)), Style::default().fg(GRAPH_TEXT)),
     ]));
 
     f.render_widget(Paragraph::new(lines), inner);
@@ -702,9 +789,37 @@ fn draw_ports_panel(f: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
+    // Orphan ports: processes whose parent session has ended but port is still open
+    let orphan_color = grad_at(&proc_grad, 100.0);
+    for orphan in &app.orphan_ports {
+        let cmd = orphan.command.split_whitespace().next().unwrap_or("?");
+        let cmd = cmd.rsplit('/').next().unwrap_or(cmd);
+        lines.push(Line::from(vec![
+            Span::styled(format!(" :{:<5}", orphan.port), Style::default().fg(orphan_color)),
+            Span::styled(
+                format!("{:<10}", truncate_str(&orphan.project_name, 10)),
+                Style::default().fg(orphan_color),
+            ),
+            Span::styled(
+                format!("{:<8}", truncate_str(cmd, 8)),
+                Style::default().fg(orphan_color),
+            ),
+            Span::styled(format!("{} ⚠orphan", orphan.pid), Style::default().fg(orphan_color)),
+        ]));
+    }
+
+    let has_orphans = !app.orphan_ports.is_empty();
+
     if lines.len() <= 1 {
         lines.push(Line::from(Span::styled(
             " no open ports",
+            Style::default().fg(INACTIVE_FG),
+        )));
+    }
+
+    if has_orphans {
+        lines.push(Line::from(Span::styled(
+            " X to kill orphans",
             Style::default().fg(INACTIVE_FG),
         )));
     }
@@ -729,7 +844,18 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
 
     // Session list: 1 header + 2 rows per session (main + 1 task line)
     let session_rows: u16 = app.sessions.len() as u16 * 2;
-    let detail_reserve = 5.min(inner.height / 2);
+    // Dynamic detail reserve: SESSION header (up to 3) + children/subagents + footer (3)
+    let detail_reserve = {
+        let mut h: u16 = 3; // SESSION title + cwd + task
+        h += 3; // footer (blank + MEM + version)
+        if let Some(session) = app.sessions.get(app.selected) {
+            let nc = session.children.len() as u16;
+            let ns = session.subagents.len() as u16;
+            if nc > 0 { h += 1 + nc; } // CHILDREN header + rows
+            if ns > 0 { h += 1 + ns; } // SUBAGENTS header + rows
+        }
+        h.min(inner.height / 2)
+    };
     let max_table = inner.height.saturating_sub(detail_reserve);
     let table_h = (1 + session_rows).min(max_table);
 
@@ -737,9 +863,20 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(table_h),
+            Constraint::Length(1), // separator line
             Constraint::Min(0),
         ])
         .split(inner);
+
+    // Draw separator line between session list and detail
+    {
+        let sep_area = panel_chunks[1];
+        let sep_line = "─".repeat(sep_area.width as usize);
+        f.render_widget(
+            Paragraph::new(Span::styled(sep_line, Style::default().fg(PROC_BOX))),
+            sep_area,
+        );
+    }
 
     // ── Session list table ──
     let proc_grad = make_gradient(PROC_START, PROC_MID, PROC_END);
@@ -884,7 +1021,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         Cell::from(Span::styled("Model", header_style)),
         Cell::from(Span::styled("Context", header_style)),
         Cell::from(Span::styled("Tokens", header_style)),
-        Cell::from(Span::styled("Mem", header_style)),
+        Cell::from(Span::styled("Memory", header_style)),
         Cell::from(Span::styled("Turn", header_style)),
     ])
     .height(1);
@@ -896,11 +1033,11 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(14),  // project
         Constraint::Length(9),   // session id (8 chars + pad)
         Constraint::Min(10),     // summary (fills remaining space)
-        Constraint::Length(6),   // status
-        Constraint::Length(10),  // model
+        Constraint::Length(8),   // status
+        Constraint::Length(8),   // model
         Constraint::Length(7),   // context
         Constraint::Length(7),   // tokens
-        Constraint::Length(5),   // mem
+        Constraint::Length(8),   // memory
         Constraint::Length(4),   // turn
     ];
 
@@ -909,7 +1046,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
 
     // ── Detail section for selected session (full-width Paragraph, not Table) ──
     if let Some(session) = app.sessions.get(app.selected) {
-        let detail_area = panel_chunks[1];
+        let detail_area = panel_chunks[2];
         if detail_area.height < 3 {
             return;
         }
@@ -933,8 +1070,28 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         let has_children = !session.children.is_empty();
         let has_subagents = !session.subagents.is_empty();
 
-        if !has_children && !has_subagents {
-            // No children or subagents — show session info summary
+        // Always show SESSION header (cwd + task) at top, then children/subagents below
+        let session_header_h: u16 = {
+            let mut h = 1u16; // SESSION title
+            if !session.cwd.is_empty() { h += 1; }
+            if !session.initial_prompt.is_empty() { h += 1; }
+            h
+        };
+        let (header_area, lower_area) = if has_children || has_subagents {
+            let parts = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(session_header_h),
+                    Constraint::Min(1),
+                ])
+                .split(detail_body);
+            (parts[0], Some(parts[1]))
+        } else {
+            (detail_body, None)
+        };
+
+        // SESSION header — always rendered
+        {
             let mut lines = Vec::new();
             lines.push(Line::from(Span::styled(
                 format!(" SESSION (►{} · {})", session.pid, &session.project_name),
@@ -947,7 +1104,7 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
                 ]));
             }
             if !session.initial_prompt.is_empty() {
-                let max_w = (detail_body.width as usize).saturating_sub(9);
+                let max_w = (header_area.width as usize).saturating_sub(9);
                 lines.push(Line::from(vec![
                     Span::styled("  task ", Style::default().fg(GRAPH_TEXT)),
                     Span::styled(
@@ -956,30 +1113,29 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
                     ),
                 ]));
             }
-            f.render_widget(Paragraph::new(lines), detail_body);
-        } else if has_children || has_subagents {
+            f.render_widget(Paragraph::new(lines), header_area);
+        }
+
+        // Children + Subagents below session header
+        if let Some(lower) = lower_area {
             let body_chunks = if has_children && has_subagents {
                 Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-                    .split(detail_body)
+                    .split(lower)
             } else {
                 Layout::default()
                     .direction(Direction::Horizontal)
                     .constraints([Constraint::Percentage(100)])
-                    .split(detail_body)
+                    .split(lower)
             };
 
             // Children (left side)
             if has_children {
                 let children_area = body_chunks[0];
                 let mut lines = Vec::new();
-                let max_hdr = (children_area.width as usize).saturating_sub(2);
                 lines.push(Line::from(Span::styled(
-                    truncate_str(
-                        &format!(" CHILDREN (►{} · {})", session.pid, &session.project_name),
-                        max_hdr,
-                    ),
+                    " CHILDREN",
                     Style::default().fg(TITLE).add_modifier(Modifier::BOLD),
                 )));
                 for child in &session.children {
@@ -1131,6 +1287,9 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     if has_tmux {
         spans.push(Span::styled("↵", Style::default().fg(HI_FG)));
         spans.push(Span::styled(" jump ", Style::default().fg(MAIN_FG)));
+    } else {
+        spans.push(Span::styled("↵", Style::default().fg(INACTIVE_FG)));
+        spans.push(Span::styled(" jump ", Style::default().fg(INACTIVE_FG)));
     }
     spans.push(Span::styled("x", Style::default().fg(HI_FG)));
     spans.push(Span::styled(" kill ", Style::default().fg(MAIN_FG)));
