@@ -27,6 +27,8 @@ pub struct SubAgent {
 
 #[derive(Debug, Clone)]
 pub struct AgentSession {
+    /// Which CLI tool this session belongs to: "claude", "codex", etc.
+    pub agent_cli: &'static str,
     pub pid: u32,
     pub session_id: String,
     pub cwd: String,
@@ -52,6 +54,8 @@ pub struct AgentSession {
     pub mem_line_count: u32,
     pub children: Vec<ChildProcess>,
     pub transcript_offset: u64,
+    /// First user prompt text, truncated — used as session title
+    pub initial_prompt: String,
 }
 
 impl AgentSession {

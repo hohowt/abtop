@@ -177,13 +177,16 @@ fn styled_label(text: &str) -> Span<'static> {
 pub fn draw(f: &mut Frame, app: &App) {
     let area = f.area();
 
+    // Top panel height: enough for graph rows + border
+    let top_h = (app.sessions.len() as u16 + 4).min(12).max(7);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // header bar
-            Constraint::Length(7),  // top: rate limit + context
-            Constraint::Min(10),   // middle
-            Constraint::Length(1), // footer
+            Constraint::Length(1),     // header bar
+            Constraint::Length(top_h), // top: rate limit + context
+            Constraint::Min(10),      // middle
+            Constraint::Length(1),    // footer
         ])
         .split(area);
 
@@ -242,16 +245,16 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(line), area);
 }
 
-// ── top panel: rate limit + context ──────────────────────────────────────────
+// ── top panel: live token graph + context bars ───────────────────────────────
 
 fn draw_top_panel(f: &mut Frame, app: &App, area: Rect) {
     let cpu_grad = make_gradient(CPU_START, CPU_MID, CPU_END);
 
-    // Single unified box for the entire top panel
-    let block = btop_block("rate limit + context", "¹", CPU_BOX);
+    // Single unified box
+    let block = btop_block("usage", "¹", CPU_BOX);
     f.render_widget(block, area);
 
-    // Calculate inner area (inside borders)
+    // Inner area (inside borders)
     let inner = Rect {
         x: area.x + 1,
         y: area.y + 1,
@@ -259,55 +262,122 @@ fn draw_top_panel(f: &mut Frame, app: &App, area: Rect) {
         height: area.height.saturating_sub(2),
     };
 
-    // Split inner area: left 40% for rate limit, right 60% for context
+    // Left: live braille graph, Right: per-session context bars
     let inner_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(inner);
 
-    // Rate limit (left side, no borders)
-    let rl_text = vec![
-        Line::from(""),
-        Line::from(vec![
-            styled_label("  5h  "),
-            Span::styled("—  unavailable", Style::default().fg(INACTIVE_FG)),
-        ]),
-        Line::from(vec![
-            styled_label("  7d  "),
-            Span::styled("—  unavailable", Style::default().fg(INACTIVE_FG)),
-        ]),
-        Line::from(""),
-    ];
-    f.render_widget(Paragraph::new(rl_text), inner_chunks[0]);
+    // ── Left: live token-rate braille graph (like btop CPU graph) ──
+    let graph_area = inner_chunks[0];
+    let graph_w = graph_area.width as usize;
+    let graph_h = graph_area.height as usize;
 
-    // Context bars (right side, no borders)
-    let inner_w = (inner_chunks[1].width as usize).saturating_sub(18);
-    let bar_width = inner_w.min(25).max(8);
+    let rates = &app.token_rates;
+    let max_rate = rates.iter().cloned().fold(1.0_f64, f64::max);
+
+    // Normalize rates to 0.0–1.0
+    let normalized: Vec<f64> = rates.iter().map(|&r| r / max_rate).collect();
+
+    // Render multi-row braille graph (each row covers a vertical slice)
+    let mut graph_lines: Vec<Line> = Vec::new();
+    if graph_h > 0 {
+        for row in 0..graph_h {
+            // Each row covers a vertical band: top row = high values, bottom = low
+            let row_lo = (graph_h - 1 - row) as f64 / graph_h as f64;
+            let row_hi = (graph_h - row) as f64 / graph_h as f64;
+
+            let needed = graph_w * 2; // braille encodes 2 data points per char
+            let sampled: Vec<f64> = if normalized.len() >= needed {
+                normalized[normalized.len() - needed..].to_vec()
+            } else {
+                let mut v = vec![0.0; needed - normalized.len()];
+                v.extend_from_slice(&normalized);
+                v
+            };
+
+            let mut spans = Vec::new();
+            for col in 0..graph_w {
+                // Map values to this row's band (0-4 levels within the band)
+                let v_prev = sampled[col * 2];
+                let v_cur = sampled[col * 2 + 1];
+
+                let to_level = |v: f64| -> usize {
+                    if v <= row_lo { 0 }
+                    else if v >= row_hi { 4 }
+                    else {
+                        let frac = (v - row_lo) / (row_hi - row_lo);
+                        (frac * 4.0).round().min(4.0) as usize
+                    }
+                };
+
+                let prev = to_level(v_prev);
+                let cur = to_level(v_cur);
+                let idx = (prev * 5 + cur).min(24);
+                let pct = (v_cur * 100.0).round();
+                let color = grad_at(&cpu_grad, pct);
+                spans.push(Span::styled(
+                    BRAILLE_UP[idx].to_string(),
+                    Style::default().fg(color),
+                ));
+            }
+            graph_lines.push(Line::from(spans));
+        }
+    }
+
+    // Add rate summary at bottom of graph
+    let last_rate = rates.back().copied().unwrap_or(0.0);
+    let total_tokens: u64 = app.sessions.iter().map(|s| s.total_tokens()).sum();
+    if !graph_lines.is_empty() {
+        let last_idx = graph_lines.len() - 1;
+        graph_lines[last_idx] = Line::from(vec![
+            Span::styled(
+                format!(" {}/tick", fmt_tokens(last_rate as u64)),
+                Style::default().fg(GRAPH_TEXT),
+            ),
+            Span::styled(
+                format!("  total: {}", fmt_tokens(total_tokens)),
+                Style::default().fg(MAIN_FG),
+            ),
+        ]);
+    }
+
+    f.render_widget(Paragraph::new(graph_lines), graph_area);
+
+    // ── Right: per-session context bars ──
+    let ctx_area = inner_chunks[1];
+    let name_w = 14;
+    let inner_w = (ctx_area.width as usize).saturating_sub(name_w + 10);
+    let bar_width = inner_w.min(30).max(4);
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // "SESSION CONTEXT" header
     lines.push(Line::from(Span::styled(
         " SESSION CONTEXT",
         Style::default().fg(TITLE).add_modifier(Modifier::BOLD),
     )));
 
     for (i, session) in app.sessions.iter().enumerate() {
-        let pct = session.context_percent.min(100.0);
-        let warn = if pct >= 90.0 { " ⚠" } else { "" };
-        let pct_color = grad_at(&cpu_grad, pct);
+        let raw_pct = session.context_percent;
+        let bar_pct = raw_pct.min(100.0);
+        let warn = if raw_pct >= 90.0 { " ⚠" } else { "" };
+        let pct_color = grad_at(&cpu_grad, bar_pct);
 
-        let mut spans = vec![Span::styled(
-            format!(" S{} {:<10}", i + 1, truncate_str(&session.project_name, 10)),
-            Style::default().fg(MAIN_FG),
-        )];
-        spans.extend(meter_bar(pct, bar_width, &cpu_grad));
+        let label = format!(
+            " S{} {:<w$}",
+            i + 1,
+            truncate_str(&session.project_name, name_w),
+            w = name_w
+        );
+        let mut spans = vec![Span::styled(label, Style::default().fg(MAIN_FG))];
+        spans.extend(meter_bar(bar_pct, bar_width, &cpu_grad));
         spans.push(Span::styled(
-            format!(" {:>3.0}%{}", pct, warn),
+            format!(" {:>3.0}%{}", raw_pct, warn),
             Style::default().fg(pct_color),
         ));
         lines.push(Line::from(spans));
     }
+
     if app.sessions.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no active sessions",
@@ -315,27 +385,25 @@ fn draw_top_panel(f: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
-    // Session count summary
     lines.push(Line::from(Span::styled(
         format!(" sessions: {}", app.sessions.len()),
         Style::default().fg(GRAPH_TEXT),
     )));
 
-    f.render_widget(Paragraph::new(lines), inner_chunks[1]);
+    f.render_widget(Paragraph::new(lines), ctx_area);
 }
 
 // ── tokens panel — maps to btop's ²mem panel ────────────────────────────────
 
 fn draw_tokens_panel(f: &mut Frame, app: &App, area: Rect) {
-    let total_in: u64 = app.sessions.iter().map(|s| s.total_input_tokens).sum();
-    let total_out: u64 = app.sessions.iter().map(|s| s.total_output_tokens).sum();
-    let total_cache: u64 = app
-        .sessions
-        .iter()
+    let selected = app.sessions.get(app.selected);
+    let total_in: u64 = selected.map(|s| s.total_input_tokens).unwrap_or(0);
+    let total_out: u64 = selected.map(|s| s.total_output_tokens).unwrap_or(0);
+    let total_cache: u64 = selected
         .map(|s| s.total_cache_read + s.total_cache_create)
-        .sum();
+        .unwrap_or(0);
     let total: u64 = total_in + total_out + total_cache;
-    let turns: u32 = app.sessions.iter().map(|s| s.turn_count).sum();
+    let turns: u32 = selected.map(|s| s.turn_count).unwrap_or(0);
     let avg = if turns > 0 { total / turns as u64 } else { 0 };
 
     // Compute percentages for mini meter bars
@@ -551,6 +619,32 @@ fn draw_ports_panel(f: &mut Frame, app: &App, area: Rect) {
 // ── sessions panel — maps to btop's ⁴proc ───────────────────────────────────
 
 fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
+    // Render the outer block
+    let block = btop_block("sessions", "⁴", PROC_BOX);
+    f.render_widget(block, area);
+
+    let inner = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+
+    // Session list: 1 header + sessions * 2 (main + task)
+    // Reserve at least 5 rows for detail section (children, subagents, etc.)
+    let detail_reserve = 5.min(inner.height / 2);
+    let max_table = inner.height.saturating_sub(detail_reserve);
+    let table_h = (1 + app.sessions.len() as u16 * 2).min(max_table);
+
+    let panel_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(table_h),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+    // ── Session list table ──
     let proc_grad = make_gradient(PROC_START, PROC_MID, PROC_END);
     let mut rows = Vec::new();
 
@@ -570,7 +664,6 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         };
 
         let model_short = shorten_model(&session.model);
-
         let ctx_color = grad_at(&proc_grad, session.context_percent);
 
         let row_style = if selected {
@@ -582,6 +675,8 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
             Style::default()
         };
 
+        let sid_short = truncate_str(&session.session_id, 8);
+
         rows.push(
             Row::new(vec![
                 Cell::from(Span::styled(marker, Style::default().fg(HI_FG))),
@@ -590,7 +685,15 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(MAIN_FG),
                 )),
                 Cell::from(Span::styled(
-                    truncate_str(&session.project_name, 14),
+                    sid_short,
+                    Style::default().fg(INACTIVE_FG),
+                )),
+                Cell::from(Span::styled(
+                    if session.initial_prompt.is_empty() {
+                        truncate_str(&session.project_name, 14)
+                    } else {
+                        truncate_str(&session.initial_prompt, 14)
+                    },
                     Style::default().fg(TITLE),
                 )),
                 Cell::from(Span::styled(status_icon, Style::default().fg(status_color))),
@@ -628,182 +731,10 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
             Row::new(vec![
                 Cell::from(""),
                 Cell::from(""),
+                Cell::from(""),
                 Cell::from(Span::styled(
                     format!("└─ {}", truncate_str(&session.current_task, 50)),
                     Style::default().fg(GRAPH_TEXT),
-                )),
-                Cell::from(""),
-                Cell::from(""),
-                Cell::from(""),
-                Cell::from(""),
-                Cell::from(""),
-                Cell::from(""),
-            ])
-            .height(1),
-        );
-    }
-
-    // Selected session detail: children
-    if let Some(session) = app.sessions.get(app.selected) {
-        if !session.children.is_empty() {
-            rows.push(Row::new(vec![Cell::from(""); 9]).height(1));
-            rows.push(
-                Row::new(vec![
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(Span::styled(
-                        format!("CHILDREN (►{} · {})", session.pid, session.project_name),
-                        Style::default()
-                            .fg(TITLE)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                ])
-                .height(1),
-            );
-
-            for child in &session.children {
-                let cmd_short = child
-                    .command
-                    .split_whitespace()
-                    .take(3)
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let port_str = child.port.map(|p| format!(":{}", p)).unwrap_or_default();
-                rows.push(
-                    Row::new(vec![
-                        Cell::from(""),
-                        Cell::from(Span::styled(
-                            format!("{}", child.pid),
-                            Style::default().fg(MAIN_FG),
-                        )),
-                        Cell::from(Span::styled(
-                            truncate_str(&cmd_short, 30),
-                            Style::default().fg(GRAPH_TEXT),
-                        )),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(Span::styled(
-                            fmt_mem_kb(child.mem_kb),
-                            Style::default().fg(GRAPH_TEXT),
-                        )),
-                        Cell::from(Span::styled(
-                            port_str,
-                            Style::default().fg(PROC_MISC),
-                        )),
-                        Cell::from(""),
-                    ])
-                    .height(1),
-                );
-            }
-        }
-
-        // Subagents section
-        if !session.subagents.is_empty() {
-            rows.push(Row::new(vec![Cell::from(""); 9]).height(1));
-            rows.push(
-                Row::new(vec![
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(Span::styled(
-                        "SUBAGENTS",
-                        Style::default()
-                            .fg(TITLE)
-                            .add_modifier(Modifier::BOLD),
-                    )),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                ])
-                .height(1),
-            );
-            for sa in &session.subagents {
-                let (icon, icon_color) = if sa.status == "working" {
-                    ("●", PROC_MISC)
-                } else {
-                    ("✓", INACTIVE_FG)
-                };
-                rows.push(
-                    Row::new(vec![
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(Line::from(vec![
-                            Span::styled(
-                                format!(" Agent {}  ", truncate_str(&sa.name, 16)),
-                                Style::default().fg(MAIN_FG),
-                            ),
-                            Span::styled(icon, Style::default().fg(icon_color)),
-                            Span::styled(
-                                format!(" {}", fmt_tokens(sa.tokens)),
-                                Style::default().fg(GRAPH_TEXT),
-                            ),
-                        ])),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                        Cell::from(""),
-                    ])
-                    .height(1),
-                );
-            }
-        }
-
-        // MEM status line
-        {
-            let cpu_grad = make_gradient(CPU_START, CPU_MID, CPU_END);
-            let mem_color = if session.mem_line_count >= 180 {
-                grad_at(&cpu_grad, 100.0)
-            } else {
-                GRAPH_TEXT
-            };
-            rows.push(Row::new(vec![Cell::from(""); 9]).height(1));
-            rows.push(
-                Row::new(vec![
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(Span::styled(
-                        format!(
-                            "MEM {} files · {}/200 lines",
-                            session.mem_file_count, session.mem_line_count
-                        ),
-                        Style::default().fg(mem_color),
-                    )),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                    Cell::from(""),
-                ])
-                .height(1),
-            );
-        }
-
-        // Session info line
-        rows.push(Row::new(vec![Cell::from(""); 9]).height(1));
-        rows.push(
-            Row::new(vec![
-                Cell::from(""),
-                Cell::from(""),
-                Cell::from(Span::styled(
-                    format!(
-                        "{} · {} · {} turns",
-                        session.version,
-                        session.elapsed_display(),
-                        session.turn_count
-                    ),
-                    Style::default().fg(INACTIVE_FG),
                 )),
                 Cell::from(""),
                 Cell::from(""),
@@ -822,10 +753,11 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(vec![
         Cell::from(""),
         Cell::from(Span::styled("Pid:", header_style)),
-        Cell::from(Span::styled("Project:", header_style)),
+        Cell::from(Span::styled("Sess:", header_style)),
+        Cell::from(Span::styled("Session:", header_style)),
         Cell::from(Span::styled("Status:", header_style)),
         Cell::from(Span::styled("Model:", header_style)),
-        Cell::from(Span::styled("CTX", header_style)),
+        Cell::from(Span::styled("Context", header_style)),
         Cell::from(Span::styled("Tokens:", header_style)),
         Cell::from(Span::styled("Mem:", header_style)),
         Cell::from(Span::styled("Turn", header_style)),
@@ -835,20 +767,203 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
     let widths = [
         Constraint::Length(1),
         Constraint::Length(6),
-        Constraint::Min(14),
+        Constraint::Length(8),
+        Constraint::Min(12),
         Constraint::Length(6),
         Constraint::Length(8),
-        Constraint::Length(5),
+        Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(5),
         Constraint::Length(4),
     ];
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(btop_block("sessions", "⁴", PROC_BOX));
+    let table = Table::new(rows, widths).header(header);
+    f.render_widget(table, panel_chunks[0]);
 
-    f.render_widget(table, area);
+    // ── Detail section for selected session (full-width Paragraph, not Table) ──
+    if let Some(session) = app.sessions.get(app.selected) {
+        let detail_area = panel_chunks[1];
+        if detail_area.height < 3 {
+            return;
+        }
+
+        // Reserve bottom lines for MEM + version
+        let footer_h = 3u16;
+        let detail_body_h = detail_area.height.saturating_sub(footer_h);
+        let detail_body = Rect {
+            x: detail_area.x,
+            y: detail_area.y,
+            width: detail_area.width,
+            height: detail_body_h,
+        };
+        let detail_footer = Rect {
+            x: detail_area.x,
+            y: detail_area.y + detail_body_h,
+            width: detail_area.width,
+            height: footer_h.min(detail_area.height),
+        };
+
+        let has_children = !session.children.is_empty();
+        let has_subagents = !session.subagents.is_empty();
+
+        if has_children || has_subagents {
+            let body_chunks = if has_children && has_subagents {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+                    .split(detail_body)
+            } else {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(100)])
+                    .split(detail_body)
+            };
+
+            // Children (left side)
+            if has_children {
+                let children_area = body_chunks[0];
+                let mut lines = Vec::new();
+                let max_hdr = (children_area.width as usize).saturating_sub(2);
+                lines.push(Line::from(Span::styled(
+                    truncate_str(
+                        &format!(" CHILDREN (►{} · {})", session.pid, if session.initial_prompt.is_empty() { &session.project_name } else { &session.initial_prompt }),
+                        max_hdr,
+                    ),
+                    Style::default().fg(TITLE).add_modifier(Modifier::BOLD),
+                )));
+                for child in &session.children {
+                    let cmd_short = child
+                        .command
+                        .split_whitespace()
+                        .take(3)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let port_str = child.port.map(|p| format!(" :{}", p)).unwrap_or_default();
+                    let max_cmd = (children_area.width as usize).saturating_sub(18);
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            format!(" {:<6}", child.pid),
+                            Style::default().fg(MAIN_FG),
+                        ),
+                        Span::styled(
+                            truncate_str(&cmd_short, max_cmd),
+                            Style::default().fg(GRAPH_TEXT),
+                        ),
+                        Span::styled(
+                            format!(" {:>5}", fmt_mem_kb(child.mem_kb)),
+                            Style::default().fg(GRAPH_TEXT),
+                        ),
+                        Span::styled(port_str, Style::default().fg(PROC_MISC)),
+                    ]));
+                }
+                f.render_widget(Paragraph::new(lines), children_area);
+            }
+
+            // Subagents (right side, or full width if no children)
+            if has_subagents {
+                let sa_area = if has_children {
+                    body_chunks[1]
+                } else {
+                    body_chunks[0]
+                };
+
+                let mut lines = Vec::new();
+                lines.push(Line::from(Span::styled(
+                    " SUBAGENTS",
+                    Style::default().fg(TITLE).add_modifier(Modifier::BOLD),
+                )));
+
+                let col_w = sa_area.width as usize;
+                let use_two_cols = session.subagents.len() > 6 && col_w >= 50;
+
+                if use_two_cols {
+                    let half_w = col_w / 2;
+                    let name_w = half_w.saturating_sub(12);
+                    let mid = (session.subagents.len() + 1) / 2;
+                    let left_agents = &session.subagents[..mid];
+                    let right_agents = &session.subagents[mid..];
+
+                    for row_idx in 0..mid {
+                        let mut spans = Vec::new();
+                        // Left column
+                        let sa = &left_agents[row_idx];
+                        let icon = if sa.status == "working" { "●" } else { "✓" };
+                        let fg = if sa.status == "working" { MAIN_FG } else { GRAPH_TEXT };
+                        spans.push(Span::styled(
+                            format!("  {} {:<w$}", icon, truncate_str(&sa.name, name_w), w = name_w),
+                            Style::default().fg(fg),
+                        ));
+                        spans.push(Span::styled(
+                            format!("{:>6}", fmt_tokens(sa.tokens)),
+                            Style::default().fg(GRAPH_TEXT),
+                        ));
+
+                        // Right column
+                        if let Some(sa_r) = right_agents.get(row_idx) {
+                            let icon_r = if sa_r.status == "working" { "●" } else { "✓" };
+                            let fg_r = if sa_r.status == "working" { MAIN_FG } else { GRAPH_TEXT };
+                            spans.push(Span::styled(
+                                format!("  {} {:<w$}", icon_r, truncate_str(&sa_r.name, name_w), w = name_w),
+                                Style::default().fg(fg_r),
+                            ));
+                            spans.push(Span::styled(
+                                format!("{:>6}", fmt_tokens(sa_r.tokens)),
+                                Style::default().fg(GRAPH_TEXT),
+                            ));
+                        }
+                        lines.push(Line::from(spans));
+                    }
+                } else {
+                    let name_w = col_w.saturating_sub(12);
+                    for sa in &session.subagents {
+                        let icon = if sa.status == "working" { "●" } else { "✓" };
+                        let fg = if sa.status == "working" { MAIN_FG } else { GRAPH_TEXT };
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("  {} {:<w$}", icon, truncate_str(&sa.name, name_w), w = name_w),
+                                Style::default().fg(fg),
+                            ),
+                            Span::styled(
+                                format!("{:>6}", fmt_tokens(sa.tokens)),
+                                Style::default().fg(GRAPH_TEXT),
+                            ),
+                        ]));
+                    }
+                }
+                f.render_widget(Paragraph::new(lines), sa_area);
+            }
+        }
+
+        // Footer: MEM + version (full width)
+        {
+            let cpu_grad = make_gradient(CPU_START, CPU_MID, CPU_END);
+            let mem_color = if session.mem_line_count >= 180 {
+                grad_at(&cpu_grad, 100.0)
+            } else {
+                GRAPH_TEXT
+            };
+            let footer_lines = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    format!(
+                        " MEM {} files · {}/200 lines",
+                        session.mem_file_count, session.mem_line_count
+                    ),
+                    Style::default().fg(mem_color),
+                )),
+                Line::from(Span::styled(
+                    format!(
+                        " {} · {} · {} turns",
+                        session.version,
+                        session.elapsed_display(),
+                        session.turn_count
+                    ),
+                    Style::default().fg(INACTIVE_FG),
+                )),
+            ];
+            f.render_widget(Paragraph::new(footer_lines), detail_footer);
+        }
+    }
 }
 
 // ── footer — btop style: ↑ select ↓ info ↵ terminate ── ─────────────────────

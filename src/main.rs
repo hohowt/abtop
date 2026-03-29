@@ -77,10 +77,15 @@ fn print_snapshot(app: &App) {
             model::SessionStatus::Error(_) => "✗ Err",
             model::SessionStatus::Done => "✓ Done",
         };
+        let display_name = if session.initial_prompt.is_empty() {
+            session.project_name.clone()
+        } else {
+            session.initial_prompt.clone()
+        };
         println!(
             "  {} {:<14} {} {:<10} CTX:{:>3.0}% Tok:{} Mem:{}M {}",
             session.pid,
-            session.project_name,
+            display_name,
             status,
             session.model.replace("claude-", ""),
             session.context_percent,

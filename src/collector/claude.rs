@@ -86,6 +86,7 @@ impl ClaudeCollector {
         let mut git_branch = String::new();
         let mut last_activity = std::time::UNIX_EPOCH;
         let mut token_history = Vec::new();
+        let mut initial_prompt = String::new();
 
         if let Some(ref tp) = transcript_path {
             // Always parse from beginning to get correct cumulative totals.
@@ -105,6 +106,7 @@ impl ClaudeCollector {
             git_branch = result.git_branch;
             last_activity = result.last_activity;
             token_history = result.token_history;
+            initial_prompt = result.initial_prompt;
         }
 
         let status = if !pid_alive {
@@ -161,6 +163,7 @@ impl ClaudeCollector {
         let (mem_file_count, mem_line_count) = Self::collect_memory_status(&memory_dir);
 
         Some(AgentSession {
+            agent_cli: "claude",
             pid: sf.pid,
             session_id: sf.session_id,
             cwd: sf.cwd,
@@ -186,6 +189,7 @@ impl ClaudeCollector {
             mem_line_count,
             children,
             transcript_offset: 0,
+            initial_prompt,
         })
     }
 
@@ -438,6 +442,7 @@ struct TranscriptResult {
     last_activity: std::time::SystemTime,
     new_offset: u64,
     token_history: Vec<u64>,
+    initial_prompt: String,
 }
 
 fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
@@ -455,6 +460,7 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
         last_activity: std::time::UNIX_EPOCH,
         new_offset: from_offset,
         token_history: Vec::new(),
+        initial_prompt: String::new(),
     };
 
     let file = match fs::File::open(path) {
@@ -533,6 +539,12 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                             if let Some(b) = val.get("gitBranch").and_then(|b| b.as_str()) {
                                 result.git_branch = b.to_string();
                             }
+                            // Extract first user prompt as session title
+                            if result.initial_prompt.is_empty() {
+                                if let Some(msg) = val.get("message") {
+                                    result.initial_prompt = extract_prompt_text(msg);
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -544,6 +556,52 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
 
     result.new_offset = bytes_read;
     result
+}
+
+/// Extract a short summary from the first user message content.
+/// Handles both string content and array-of-blocks content.
+fn extract_prompt_text(message: &Value) -> String {
+    let raw = match message.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(arr)) => {
+            // Find first text block
+            arr.iter()
+                .filter_map(|block| {
+                    if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        block.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .next()
+                .unwrap_or_default()
+        }
+        _ => return String::new(),
+    };
+
+    // Clean up: remove image markers, code blocks, markdown headers
+    let cleaned: String = raw
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("```"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // Remove [Image #N] markers
+    let mut result = cleaned;
+    while let Some(start) = result.find("[Image") {
+        if let Some(end) = result[start..].find(']') {
+            result = format!("{}{}", &result[..start], result[start + end + 1..].trim_start());
+        } else {
+            break;
+        }
+    }
+
+    let clean = result.trim().to_string();
+    if clean.is_empty() {
+        return String::new();
+    }
+    truncate(&clean, 50)
 }
 
 fn extract_tool_arg(tool_use: &Value) -> String {
