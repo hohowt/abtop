@@ -171,13 +171,13 @@ StatusLine JSON includes:
 ```
 
 To collect: user must configure a StatusLine script that writes to a file abtop reads.
-`abtop --setup` could automate this (writes script + updates `~/.claude/settings.json`).
+**Planned**: `abtop --setup` could automate this (writes script + updates `~/.claude/settings.json`). Not yet implemented.
 - `rate_limits` is optional — only present for Pro/Max subscribers after first API response.
 - Per-model breakdown (e.g. "Sonnet only") is NOT available.
 - Account-level metric, shared across all sessions.
 - Show "—" when StatusLine not configured or data unavailable.
 
-**Codex CLI**: Available in session JSONL without any setup.
+**Codex CLI** (planned v0.2): Available in session JSONL without any setup.
 `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` `token_count` events include:
 ```json
 {

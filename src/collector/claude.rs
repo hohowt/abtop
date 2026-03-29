@@ -526,13 +526,14 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                     // Track per-turn total tokens for sparkline
                                     result.token_history.push(inp + out + cr + cc);
                                 }
-                                // Extract tool_uses from latest turn
+                                // Extract last tool_use from latest turn (= most recently running)
                                 if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
-                                    for item in content {
+                                    for item in content.iter().rev() {
                                         if item.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
                                             let tool = item.get("name").and_then(|n| n.as_str()).unwrap_or("?");
                                             let arg = extract_tool_arg(item);
                                             result.current_task = format!("{} {}", tool, arg);
+                                            break;
                                         }
                                     }
                                 }
