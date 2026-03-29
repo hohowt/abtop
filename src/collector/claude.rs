@@ -1,3 +1,4 @@
+use super::process::{self, ProcInfo};
 use crate::model::{AgentSession, ChildProcess, SessionFile, SessionStatus, SubAgent};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -23,15 +24,11 @@ impl ClaudeCollector {
         }
     }
 
-    pub fn collect(&mut self) -> Vec<AgentSession> {
+    pub fn collect(&mut self, shared: &super::SharedProcessData) -> Vec<AgentSession> {
         let session_files = match fs::read_dir(&self.sessions_dir) {
             Ok(entries) => entries,
             Err(_) => return vec![],
         };
-
-        let process_info = Self::get_process_info();
-        let children_map = Self::get_children_map(&process_info);
-        let ports = Self::get_listening_ports();
 
         let mut sessions = Vec::new();
         for entry in session_files.flatten() {
@@ -40,7 +37,7 @@ impl ClaudeCollector {
                 continue;
             }
 
-            if let Some(session) = self.load_session(&path, &process_info, &children_map, &ports) {
+            if let Some(session) = self.load_session(&path, &shared.process_info, &shared.children_map, &shared.ports) {
                 sessions.push(session);
             }
         }
@@ -119,7 +116,19 @@ impl ClaudeCollector {
             if since_activity.as_secs() < 30 {
                 SessionStatus::Working
             } else {
-                SessionStatus::Waiting
+                // Transcript is stale (>30s). Check CPU-based signals:
+                // 1. Claude process using CPU > 1% → likely thinking/streaming
+                let claude_cpu_active = proc.map_or(false, |p| p.cpu_pct > 1.0);
+                // 2. Any descendant using significant CPU (>5%) → likely running a tool
+                //    (higher threshold avoids false positives from idle watchers/servers)
+                let has_active_descendant = process::has_active_descendant(
+                    sf.pid, children_map, process_info, 5.0,
+                );
+                if claude_cpu_active || has_active_descendant {
+                    SessionStatus::Working
+                } else {
+                    SessionStatus::Waiting
+                }
             }
         };
 
@@ -137,7 +146,7 @@ impl ClaudeCollector {
         } else if matches!(status, SessionStatus::Waiting) {
             vec!["waiting for input".to_string()]
         } else {
-            Vec::new()
+            vec!["thinking...".to_string()]
         };
 
         let mut children = Vec::new();
@@ -156,7 +165,7 @@ impl ClaudeCollector {
         }
 
         // Git stats: added and modified file counts
-        let (git_added, git_modified) = Self::collect_git_stats(&sf.cwd);
+        let (git_added, git_modified) = process::collect_git_stats(&sf.cwd);
 
         // Subagent discovery
         let encoded_path = sf.cwd.replace('/', "-");
@@ -209,108 +218,6 @@ impl ClaudeCollector {
         }
     }
 
-    fn get_process_info() -> HashMap<u32, ProcInfo> {
-        let mut map = HashMap::new();
-        let output = Command::new("ps")
-            .args(["-eo", "pid,ppid,rss,command"])
-            .output()
-            .ok();
-
-        if let Some(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 4 {
-                    if let (Ok(pid), Ok(ppid), Ok(rss)) = (
-                        parts[0].parse::<u32>(),
-                        parts[1].parse::<u32>(),
-                        parts[2].parse::<u64>(),
-                    ) {
-                        let command = parts[3..].join(" ");
-                        map.insert(pid, ProcInfo {
-                            pid,
-                            ppid,
-                            rss_kb: rss,
-                            command,
-                        });
-                    }
-                }
-            }
-        }
-        map
-    }
-
-    fn get_children_map(procs: &HashMap<u32, ProcInfo>) -> HashMap<u32, Vec<u32>> {
-        let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-        for proc in procs.values() {
-            children.entry(proc.ppid).or_default().push(proc.pid);
-        }
-        children
-    }
-
-    fn get_listening_ports() -> HashMap<u32, Vec<u16>> {
-        let mut map: HashMap<u32, Vec<u16>> = HashMap::new();
-        let output = Command::new("lsof")
-            .args(["-i", "-P", "-n", "-sTCP:LISTEN"])
-            .output()
-            .ok();
-
-        if let Some(output) = output {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().skip(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                // Only parse TCP LISTEN rows; skip UDP and other types
-                // lsof output: "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME (LISTEN)"
-                // NODE is parts[7], must be "TCP"; line must contain "(LISTEN)"
-                let is_tcp_listen = parts.len() >= 9
-                    && parts[7] == "TCP"
-                    && line.contains("(LISTEN)");
-                if is_tcp_listen {
-                    if let Ok(pid) = parts[1].parse::<u32>() {
-                        // NAME column at index 8: "*:56393" or "127.0.0.1:3000"
-                        if let Some(addr) = parts.get(8) {
-                            if let Some(port_str) = addr.rsplit(':').next() {
-                                if let Ok(port) = port_str.parse::<u16>() {
-                                    map.entry(pid).or_default().push(port);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        map
-    }
-
-    fn collect_git_stats(cwd: &str) -> (u32, u32) {
-        let output = Command::new("git")
-            .args(["-C", cwd, "status", "--porcelain"])
-            .output()
-            .ok();
-
-        let mut added = 0u32;
-        let mut modified = 0u32;
-
-        if let Some(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    if line.len() < 2 {
-                        continue;
-                    }
-                    let status_code = &line[..2];
-                    // '??' = untracked (new), 'A ' or ' A' = added
-                    if status_code.contains('?') || status_code.contains('A') {
-                        added += 1;
-                    } else if status_code.contains('M') {
-                        modified += 1;
-                    }
-                }
-            }
-        }
-
-        (added, modified)
-    }
 
     fn collect_subagents(subagents_dir: &Path) -> Vec<SubAgent> {
         let mut subagents = Vec::new();
@@ -424,13 +331,6 @@ impl ClaudeCollector {
     }
 }
 
-#[derive(Debug)]
-struct ProcInfo {
-    pid: u32,
-    ppid: u32,
-    rss_kb: u64,
-    command: String,
-}
 
 struct TranscriptResult {
     model: String,

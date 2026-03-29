@@ -1109,7 +1109,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     spans.push(Span::styled("q", Style::default().fg(HI_FG)));
     spans.push(Span::styled(" quit ", Style::default().fg(MAIN_FG)));
     spans.push(Span::styled("r", Style::default().fg(HI_FG)));
-    spans.push(Span::styled(" force ", Style::default().fg(MAIN_FG)));
+    spans.push(Span::styled(" refresh ", Style::default().fg(MAIN_FG)));
     spans.push(Span::styled("2s auto", Style::default().fg(INACTIVE_FG)));
     spans.push(Span::styled(
         format!("{:>width$}", format!("{} sessions", app.sessions.len()), width = remaining),
