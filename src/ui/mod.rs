@@ -402,6 +402,9 @@ fn fmt_tokens(n: u64) -> String {
 }
 
 fn truncate_str(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if s.chars().count() <= max {
         s.to_string()
     } else {

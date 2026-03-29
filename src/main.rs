@@ -27,9 +27,9 @@ fn main() -> io::Result<()> {
 
     let result = run_app(&mut terminal);
 
-    // Always restore terminal, even on error
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
+    // Always restore terminal, even on error — best-effort both steps
+    let _ = disable_raw_mode();
+    let _ = stdout().execute(LeaveAlternateScreen);
 
     result
 }

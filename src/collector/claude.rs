@@ -232,9 +232,10 @@ impl ClaudeCollector {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 9 {
                     if let Ok(pid) = parts[1].parse::<u32>() {
-                        // NAME is the last column (e.g. "*:8080" or "127.0.0.1:3000")
-                        if let Some(name) = parts.last() {
-                            if let Some(port_str) = name.rsplit(':').next() {
+                        // NAME column starts at index 8, may be followed by "(LISTEN)"
+                        // e.g. "TCP *:56393 (LISTEN)" → parts[8] = "*:56393"
+                        if let Some(addr) = parts.get(8) {
+                            if let Some(port_str) = addr.rsplit(':').next() {
                                 if let Ok(port) = port_str.parse::<u16>() {
                                     map.entry(pid).or_default().push(port);
                                 }
@@ -404,6 +405,9 @@ fn shorten_path(path: &str) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
     if s.chars().count() <= max {
         s.to_string()
     } else {
