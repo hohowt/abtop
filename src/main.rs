@@ -77,11 +77,15 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: boo
         app.tick();
     }
 
+    let mut last_tick = std::time::Instant::now();
+    let tick_interval = Duration::from_secs(2);
+    let render_interval = Duration::from_millis(500);
+
     loop {
         terminal.draw(|f| ui::draw(f, &app))?;
 
-        // Poll for events with 2s timeout (tick interval)
-        if event::poll(Duration::from_secs(2))? {
+        // Poll at 500ms for smooth animations; data tick every 2s
+        if event::poll(render_interval)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
@@ -100,14 +104,17 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: boo
                     }
                 }
             }
-        } else if demo_mode {
+        }
+
+        if demo_mode {
             // Rotate token rates to animate the sparkline
             if let Some(front) = app.token_rates.pop_front() {
                 app.token_rates.push_back(front);
             }
-        } else {
-            // Timeout = tick
+        } else if last_tick.elapsed() >= tick_interval {
+            // Data tick every 2s
             app.tick();
+            last_tick = std::time::Instant::now();
         }
 
         if app.should_quit {
