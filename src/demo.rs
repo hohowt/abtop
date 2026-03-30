@@ -77,6 +77,7 @@ pub fn populate_demo(app: &mut App) {
                 },
             ],
             transcript_offset: 0,
+            first_assistant_text: String::new(),
             initial_prompt: "Implement Stripe payment integration for checkout flow".into(),
         },
         AgentSession {
@@ -111,6 +112,7 @@ pub fn populate_demo(app: &mut App) {
             mem_line_count: 8,
             children: vec![],
             transcript_offset: 0,
+            first_assistant_text: String::new(),
             initial_prompt: "Add batch inference endpoint with GPU scheduling".into(),
         },
         AgentSession {
@@ -162,6 +164,7 @@ pub fn populate_demo(app: &mut App) {
                 },
             ],
             transcript_offset: 0,
+            first_assistant_text: String::new(),
             initial_prompt: "Fix CORS headers and add rate limiting middleware".into(),
         },
         AgentSession {
@@ -200,6 +203,7 @@ pub fn populate_demo(app: &mut App) {
                 },
             ],
             transcript_offset: 0,
+            first_assistant_text: String::new(),
             initial_prompt: "Create interactive heatmap component with D3.js".into(),
         },
     ];

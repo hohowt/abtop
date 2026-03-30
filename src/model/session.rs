@@ -87,6 +87,8 @@ pub struct AgentSession {
     pub transcript_offset: u64,
     /// First user prompt text, truncated — used as session title
     pub initial_prompt: String,
+    /// First assistant response text (text blocks only) — used as summary fallback
+    pub first_assistant_text: String,
 }
 
 impl AgentSession {

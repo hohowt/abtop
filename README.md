@@ -43,6 +43,18 @@ abtop --setup  # Install rate limit collection hook
 
 Recommended terminal size: **120x40** or larger. Minimum 80x24 — panels hide gracefully when small.
 
+### tmux
+
+abtop works standalone, but running inside tmux unlocks session jumping — press `Enter` to switch directly to the pane running that agent.
+
+```bash
+tmux new -s work
+# pane 0: abtop
+# pane 1: claude (project A)
+# pane 2: claude (project B)
+# → Enter on a session in abtop jumps to its pane
+```
+
 ## Supported Agents
 
 | Feature | Claude Code | Codex CLI |

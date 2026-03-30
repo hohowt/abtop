@@ -127,9 +127,8 @@ impl MultiCollector {
             }
         }
 
-        // Hide dead Codex sessions (pid==0 is the Codex sentinel for exited process).
-        // Claude sessions keep their original PID and are removed when session file disappears.
-        all.retain(|s| !(matches!(s.status, SessionStatus::Done) && s.pid == 0));
+        // Hide dead sessions: Codex uses pid==0 sentinel, Claude is filtered in collect().
+        all.retain(|s| !matches!(s.status, SessionStatus::Done));
         all.sort_by_key(|s| std::cmp::Reverse(s.started_at));
 
         // --- Orphan port detection ---

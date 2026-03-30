@@ -1253,10 +1253,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         let has_children = !session.children.is_empty();
         let has_subagents = !session.subagents.is_empty();
 
-        // Always show SESSION header (cwd + task) at top, then children/subagents below
+        // Always show SESSION header (task) at top, then children/subagents below
         let session_header_h: u16 = {
             let mut h = 1u16; // SESSION title
-            if !session.cwd.is_empty() { h += 1; }
             if !session.initial_prompt.is_empty() { h += 1; }
             h
         };
@@ -1277,15 +1276,9 @@ fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect) {
         {
             let mut lines = Vec::new();
             lines.push(Line::from(Span::styled(
-                format!(" SESSION (►{} · {})", session.pid, &session.project_name),
+                format!(" SESSION (►{} · {})", &session.session_id, &session.cwd),
                 Style::default().fg(TITLE).add_modifier(Modifier::BOLD),
             )));
-            if !session.cwd.is_empty() {
-                lines.push(Line::from(vec![
-                    Span::styled("  cwd  ", Style::default().fg(GRAPH_TEXT)),
-                    Span::styled(&*session.cwd, Style::default().fg(MAIN_FG)),
-                ]));
-            }
             if !session.initial_prompt.is_empty() {
                 let max_w = (header_area.width as usize).saturating_sub(9);
                 lines.push(Line::from(vec![

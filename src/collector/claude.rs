@@ -154,6 +154,7 @@ impl ClaudeCollector {
             last_activity: std::time::UNIX_EPOCH, new_offset: 0,
             file_identity: (0, 0),
             token_history: Vec::new(), initial_prompt: String::new(),
+            first_assistant_text: String::new(),
         };
         let cached = self.transcript_cache.get(&sf.session_id).unwrap_or(&empty_result);
 
@@ -170,10 +171,13 @@ impl ClaudeCollector {
         let last_activity = cached.last_activity;
         let token_history = cached.token_history.clone();
         let initial_prompt = cached.initial_prompt.clone();
+        let first_assistant_text = cached.first_assistant_text.clone();
 
-        let status = if !pid_alive {
-            SessionStatus::Done
-        } else {
+        if !pid_alive {
+            return None;
+        }
+
+        let status = {
             let since_activity = std::time::SystemTime::now()
                 .duration_since(last_activity)
                 .unwrap_or_default();
@@ -240,7 +244,7 @@ impl ClaudeCollector {
         let (git_added, git_modified) = (0, 0);
 
         // Subagent discovery
-        let encoded_path = sf.cwd.replace('/', "-");
+        let encoded_path = encode_cwd_path(&sf.cwd);
         let subagents_dir = self.projects_dir.join(&encoded_path).join(&sf.session_id).join("subagents");
         let subagents = Self::collect_subagents(&subagents_dir);
 
@@ -276,11 +280,12 @@ impl ClaudeCollector {
             children,
             transcript_offset: 0,
             initial_prompt,
+            first_assistant_text,
         })
     }
 
     fn find_transcript(&self, cwd: &str, session_id: &str) -> Option<PathBuf> {
-        let encoded = cwd.replace('/', "-");
+        let encoded = encode_cwd_path(cwd);
         let dir = self.projects_dir.join(&encoded);
         let path = dir.join(format!("{}.jsonl", session_id));
         if path.exists() {
@@ -423,6 +428,8 @@ struct TranscriptResult {
     file_identity: (u64, u64),
     token_history: Vec<u64>,
     initial_prompt: String,
+    /// First assistant response text (text blocks only, no tool_use)
+    first_assistant_text: String,
 }
 
 /// Get file identity as (inode, mtime_nanos) for detecting file replacement.
@@ -459,6 +466,7 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
         file_identity: identity,
         token_history: Vec::new(),
         initial_prompt: String::new(),
+        first_assistant_text: String::new(),
     };
 
     let file = match fs::File::open(path) {
@@ -543,6 +551,30 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                     // Track per-turn total tokens for sparkline
                                     result.token_history.push(inp + out + cr + cc);
                                 }
+                                // Extract first assistant text (text blocks only) for summary fallback
+                                if result.first_assistant_text.is_empty() {
+                                    if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
+                                        let texts: Vec<&str> = content.iter()
+                                            .filter_map(|block| {
+                                                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                                    block.get("text").and_then(|t| t.as_str())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .collect();
+                                        if !texts.is_empty() {
+                                            let joined = texts.join(" ");
+                                            let normalized: String = joined
+                                                .lines()
+                                                .map(|l| l.trim())
+                                                .filter(|l| !l.is_empty())
+                                                .collect::<Vec<_>>()
+                                                .join(" ");
+                                            result.first_assistant_text = truncate(&normalized, 200);
+                                        }
+                                    }
+                                }
                                 // Extract last tool_use from latest turn (= most recently running)
                                 if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
                                     for item in content.iter().rev() {
@@ -584,6 +616,17 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
 
 /// Extract a short summary from the first user message content.
 /// Handles both string content and array-of-blocks content.
+/// Encode a cwd path to match Claude Code's project directory naming.
+/// Claude Code replaces '/', '_', and '.' with '-'.
+fn encode_cwd_path(cwd: &str) -> String {
+    cwd.chars()
+        .map(|c| match c {
+            '/' | '_' | '.' => '-',
+            _ => c,
+        })
+        .collect()
+}
+
 fn extract_prompt_text(message: &Value) -> String {
     let raw = match message.get("content") {
         Some(Value::String(s)) => s.clone(),

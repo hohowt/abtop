@@ -253,6 +253,7 @@ impl CodexCollector {
             children,
             transcript_offset: 0,
             initial_prompt: result.initial_prompt,
+            first_assistant_text: String::new(),
         }, rate_limit))
     }
 

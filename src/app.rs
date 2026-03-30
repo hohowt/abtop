@@ -149,7 +149,8 @@ impl App {
         // Spawn summary jobs for sessions that need one
         for s in &self.sessions {
             let retries = self.summary_retries.get(&s.session_id).copied().unwrap_or(0);
-            if !s.initial_prompt.is_empty()
+            let has_input = !s.initial_prompt.is_empty() || !s.first_assistant_text.is_empty();
+            if has_input
                 && !self.summaries.contains_key(&s.session_id)
                 && !self.pending_summaries.contains(&s.session_id)
                 && self.pending_summaries.len() < MAX_SUMMARY_JOBS
@@ -158,10 +159,12 @@ impl App {
                 self.pending_summaries.insert(s.session_id.clone());
                 let sid = s.session_id.clone();
                 let prompt = s.initial_prompt.clone();
+                let assistant_text = s.first_assistant_text.clone();
                 let tx = self.summary_tx.clone();
                 std::thread::spawn(move || {
-                    let result = generate_summary(&prompt);
-                    let _ = tx.send((sid, prompt, result));
+                    let result = generate_summary(&prompt, &assistant_text);
+                    let fallback_text = if prompt.is_empty() { assistant_text } else { prompt };
+                    let _ = tx.send((sid, fallback_text, result));
                 });
             }
         }
@@ -174,7 +177,7 @@ impl App {
     /// True if any session still qualifies for a summary retry.
     pub fn has_retryable_summaries(&self) -> bool {
         self.sessions.iter().any(|s| {
-            !s.initial_prompt.is_empty()
+            (!s.initial_prompt.is_empty() || !s.first_assistant_text.is_empty())
                 && !self.summaries.contains_key(&s.session_id)
                 && !self.pending_summaries.contains(&s.session_id)
                 && self.summary_retries.get(&s.session_id).copied().unwrap_or(0) < MAX_SUMMARY_RETRIES
@@ -304,6 +307,8 @@ impl App {
             // Done sessions: don't wait for pending summary, show fallback immediately
             if !session.initial_prompt.is_empty() {
                 sanitize_fallback(&session.initial_prompt, 28)
+            } else if !session.first_assistant_text.is_empty() {
+                sanitize_fallback(&session.first_assistant_text, 28)
             } else {
                 "—".to_string()
             }
@@ -320,6 +325,8 @@ impl App {
             dots.to_string()
         } else if !session.initial_prompt.is_empty() {
             sanitize_fallback(&session.initial_prompt, 28)
+        } else if !session.first_assistant_text.is_empty() {
+            sanitize_fallback(&session.first_assistant_text, 28)
         } else {
             "—".to_string()
         }
@@ -328,16 +335,26 @@ impl App {
 
 /// Call `claude --print` via stdin pipe to summarize a prompt.
 /// Returns `None` on timeout so the caller can retry later.
-fn generate_summary(prompt: &str) -> Option<String> {
+fn generate_summary(prompt: &str, assistant_text: &str) -> Option<String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
     use std::time::Duration;
 
-    // Truncate input to avoid sending huge prompts
-    let input: String = prompt.chars().take(200).collect();
+    // Build input from user prompt and/or first assistant response
+    let user_part: String = prompt.chars().take(200).collect();
+    let assistant_part: String = assistant_text.chars().take(200).collect();
+
+    let context = if !user_part.is_empty() && !assistant_part.is_empty() {
+        format!("User message: {}\n\nAssistant response: {}", user_part, assistant_part)
+    } else if !assistant_part.is_empty() {
+        format!("Assistant response: {}", assistant_part)
+    } else {
+        format!("User message: {}", user_part)
+    };
+
     let request = format!(
-        "You are a conversation title generator. Given the user's first message, create a short title (3-5 words) that describes what they want to do. Be specific and actionable. Do NOT output generic titles like 'New conversation' or 'Initial setup'. Output ONLY the title, no quotes, no explanation.\n\nUser message: {}",
-        input
+        "You are a conversation title generator. Given the conversation below, create a short title (3-5 words) that describes the session's main topic. Be specific and actionable. Do NOT output generic titles like 'New conversation' or 'Initial setup'. Output ONLY the title, no quotes, no explanation.\n\n{}",
+        context
     );
 
     let mut child = match Command::new("claude")
