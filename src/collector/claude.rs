@@ -67,8 +67,10 @@ impl ClaudeCollector {
         let proc_cmd = process_info.get(&sf.pid).map(|p| p.command.as_str());
         let pid_alive = proc_cmd
             .map(|c| {
-                let bin = c.split_whitespace().next().unwrap_or("");
-                bin == "claude" || bin.ends_with("/claude")
+                c.split_whitespace().any(|tok| {
+                    let base = tok.rsplit('/').next().unwrap_or(tok);
+                    base == "claude"
+                })
             })
             .unwrap_or(false);
 
@@ -246,7 +248,7 @@ impl ClaudeCollector {
         // Git stats: populated by MultiCollector on slow ticks
         let (git_added, git_modified) = (0, 0);
 
-        // Derive the project directory from the transcript path (handles --workspace),
+        // Derive the project directory from the transcript path (handles worktree sessions),
         // falling back to the encoded cwd.
         let project_dir = transcript_path
             .as_ref()
@@ -304,7 +306,7 @@ impl ClaudeCollector {
         }
 
         // Fallback: scan all project directories for the session file.
-        // Handles --workspace sessions where the transcript directory
+        // Handles worktree (-w) sessions where the transcript directory
         // may not match the encoded cwd from the session file.
         if let Ok(entries) = fs::read_dir(&self.projects_dir) {
             for entry in entries.flatten() {
@@ -751,7 +753,10 @@ fn is_claude_process(pid: u32) -> bool {
     match output {
         Some(out) => {
             let cmd = String::from_utf8_lossy(&out.stdout);
-            cmd.contains("/claude") && cmd.contains("--session-id")
+            cmd.split_whitespace().any(|tok| {
+                let base = tok.rsplit('/').next().unwrap_or(tok);
+                base == "claude"
+            })
         }
         None => false,
     }
