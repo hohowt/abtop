@@ -119,6 +119,9 @@ impl ClaudeCollector {
                     if delta.last_context_tokens > 0 {
                         prev.last_context_tokens = delta.last_context_tokens;
                     }
+                    if delta.max_context_tokens > prev.max_context_tokens {
+                        prev.max_context_tokens = delta.max_context_tokens;
+                    }
                     prev.turn_count += delta.turn_count;
                     // Always update current_task from delta — empty means
                     // latest assistant turn had no tool_use (task cleared)
@@ -150,7 +153,7 @@ impl ClaudeCollector {
         let empty_result = TranscriptResult {
             model: "-".to_string(),
             total_input: 0, total_output: 0, total_cache_read: 0, total_cache_create: 0,
-            last_context_tokens: 0, turn_count: 0, current_task: String::new(),
+            last_context_tokens: 0, max_context_tokens: 0, turn_count: 0, current_task: String::new(),
             version: String::new(), git_branch: String::new(),
             last_activity: std::time::UNIX_EPOCH, new_offset: 0,
             file_identity: (0, 0),
@@ -165,6 +168,7 @@ impl ClaudeCollector {
         let total_cache_read = cached.total_cache_read;
         let total_cache_create = cached.total_cache_create;
         let last_context_tokens = cached.last_context_tokens;
+        let max_context_tokens = cached.max_context_tokens;
         let turn_count = cached.turn_count;
         let current_task = cached.current_task.clone();
         let version = cached.version.clone();
@@ -201,7 +205,7 @@ impl ClaudeCollector {
             }
         };
 
-        let context_window = context_window_for_model(&model, last_context_tokens);
+        let context_window = context_window_for_model(&model, max_context_tokens);
         let context_percent = if context_window > 0 {
             (last_context_tokens as f64 / context_window as f64) * 100.0
         } else {
@@ -440,6 +444,8 @@ struct TranscriptResult {
     total_cache_create: u64,
     /// Last assistant turn's input context size (for context % calculation)
     last_context_tokens: u64,
+    /// High-water mark: largest context seen in any turn (for 1M detection)
+    max_context_tokens: u64,
     turn_count: u32,
     current_task: String,
     version: String,
@@ -480,6 +486,7 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
         total_cache_read: 0,
         total_cache_create: 0,
         last_context_tokens: 0,
+        max_context_tokens: 0,
         turn_count: 0,
         current_task: String::new(),
         version: String::new(),
@@ -571,6 +578,9 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                     result.total_cache_create += cc;
                                     // Context = last turn's total input (this is what the model "sees")
                                     result.last_context_tokens = inp + cr + cc;
+                                    if result.last_context_tokens > result.max_context_tokens {
+                                        result.max_context_tokens = result.last_context_tokens;
+                                    }
                                     // Track per-turn total tokens for sparkline
                                     result.token_history.push(inp + out + cr + cc);
                                 }
