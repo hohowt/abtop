@@ -1,5 +1,6 @@
 use crate::collector::{MultiCollector, read_rate_limits};
 use crate::model::{AgentSession, OrphanPort, RateLimitInfo, SessionStatus};
+use crate::theme::Theme;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc;
 use std::time::Instant;
@@ -53,10 +54,11 @@ pub struct App {
     pub status_msg: Option<(String, Instant)>,
     /// Kill confirmation: (selected_index, timestamp). Expires after 2s.
     kill_confirm: Option<(usize, Instant)>,
+    pub theme: Theme,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         let (tx, rx) = mpsc::channel();
         // Load cached summaries from disk
         let summaries = load_summary_cache();
@@ -77,6 +79,19 @@ impl App {
             orphan_ports: Vec::new(),
             status_msg: None,
             kill_confirm: None,
+            theme,
+        }
+    }
+
+    pub fn cycle_theme(&mut self) {
+        let names = crate::theme::THEME_NAMES;
+        let current = names.iter().position(|&n| n == self.theme.name).unwrap_or(0);
+        let next = (current + 1) % names.len();
+        self.theme = Theme::by_name(names[next]).unwrap_or_default();
+        if let Err(e) = crate::config::save_theme(names[next]) {
+            self.set_status(format!("theme: {} (save failed: {})", names[next], e));
+        } else {
+            self.set_status(format!("theme: {}", names[next]));
         }
     }
 

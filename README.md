@@ -36,9 +36,10 @@ Pre-built binaries for all platforms are available on the [GitHub Releases](http
 ## Usage
 
 ```bash
-abtop          # Launch TUI
-abtop --once   # Print snapshot and exit
-abtop --setup  # Install rate limit collection hook
+abtop                    # Launch TUI
+abtop --once             # Print snapshot and exit
+abtop --setup            # Install rate limit collection hook
+abtop --theme dracula    # Launch with a specific theme
 ```
 
 Recommended terminal size: **120x40** or larger. Minimum 80x24 — panels hide gracefully when small.
@@ -81,6 +82,20 @@ tmux new -s work
 | Subagents         |     ✅      |    ❌     |
 | Memory Status     |     ✅      |    ❌     |
 
+## Themes
+
+6 built-in themes. Press `t` to cycle at runtime, or launch with `--theme <name>`. Your choice is saved to `~/.config/abtop/config.toml`.
+
+| btop (default) | dracula | catppuccin |
+|:-:|:-:|:-:|
+| ![btop](assets/themes/btop.png) | ![dracula](assets/themes/dracula.png) | ![catppuccin](assets/themes/catppuccin.png) |
+
+| tokyo-night | gruvbox | nord |
+|:-:|:-:|:-:|
+| ![tokyo-night](assets/themes/tokyo-night.png) | ![gruvbox](assets/themes/gruvbox.png) | ![nord](assets/themes/nord.png) |
+
+Theme support contributed by [@tbouquet](https://github.com/tbouquet).
+
 ## Key Bindings
 
 | Key                | Action                               |
@@ -89,6 +104,7 @@ tmux new -s work
 | `Enter`            | Jump to session terminal (tmux only) |
 | `x`                | Kill selected session                |
 | `X`                | Kill all orphan ports                |
+| `t`                | Cycle theme                          |
 | `q`                | Quit                                 |
 | `r`                | Force refresh                        |
 

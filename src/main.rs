@@ -1,8 +1,10 @@
 mod app;
 mod collector;
+mod config;
 mod demo;
 mod model;
 mod setup;
+mod theme;
 mod ui;
 
 use app::App;
@@ -31,11 +33,45 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
+    // --theme flag > config file > default
+    let initial_theme = std::env::args()
+        .position(|a| a == "--theme")
+        .map(|pos| {
+            let val = std::env::args().nth(pos + 1);
+            match val {
+                Some(name) if !name.starts_with('-') => name,
+                Some(name) => {
+                    eprintln!("--theme requires a theme name, got '{}'", name);
+                    eprintln!("available: {}", theme::THEME_NAMES.join(", "));
+                    std::process::exit(1);
+                }
+                None => {
+                    eprintln!("--theme requires a theme name");
+                    eprintln!("available: {}", theme::THEME_NAMES.join(", "));
+                    std::process::exit(1);
+                }
+            }
+        })
+        .map(|name| {
+            theme::Theme::by_name(&name).unwrap_or_else(|| {
+                eprintln!(
+                    "unknown theme '{}'. available: {}",
+                    name,
+                    theme::THEME_NAMES.join(", ")
+                );
+                std::process::exit(1);
+            })
+        })
+        .or_else(|| {
+            let cfg = config::load_config();
+            theme::Theme::by_name(&cfg.theme)
+        });
+
     let demo_mode = std::env::args().any(|a| a == "--demo");
 
     // --once flag: print snapshot and exit
     if std::env::args().any(|a| a == "--once") {
-        let mut app = App::new();
+        let mut app = App::new(initial_theme.unwrap_or_default());
         if demo_mode {
             demo::populate_demo(&mut app);
         } else {
@@ -59,7 +95,7 @@ fn main() -> io::Result<()> {
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-    let app_result = run_app(&mut terminal, demo_mode);
+    let app_result = run_app(&mut terminal, demo_mode, initial_theme);
 
     // Always attempt both cleanup steps regardless of app result
     let r1 = disable_raw_mode();
@@ -69,8 +105,8 @@ fn main() -> io::Result<()> {
     app_result.and(r1).and(r2)
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: bool) -> io::Result<()> {
-    let mut app = App::new();
+fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: bool, initial_theme: Option<theme::Theme>) -> io::Result<()> {
+    let mut app = App::new(initial_theme.unwrap_or_default());
     if demo_mode {
         demo::populate_demo(&mut app);
     } else {
@@ -95,6 +131,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: boo
                         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
                         KeyCode::Char('x') if !demo_mode => app.kill_selected(),
                         KeyCode::Char('X') if !demo_mode => app.kill_orphan_ports(),
+                        KeyCode::Char('t') => app.cycle_theme(),
                         KeyCode::Enter if !demo_mode => {
                             if let Some(msg) = app.jump_to_session() {
                                 app.set_status(msg);
