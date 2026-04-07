@@ -13,7 +13,7 @@ pub struct ProcInfo {
 pub fn get_process_info() -> HashMap<u32, ProcInfo> {
     let mut map = HashMap::new();
     let output = Command::new("ps")
-        .args(["-eo", "pid,ppid,rss,%cpu,command"])
+        .args(["-ww", "-eo", "pid,ppid,rss,%cpu,command"])
         .output()
         .ok();
 
