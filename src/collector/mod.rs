@@ -7,6 +7,39 @@ pub use claude::ClaudeCollector;
 pub use codex::CodexCollector;
 pub use rate_limit::read_rate_limits;
 
+/// Redact common secret patterns to avoid displaying credentials in the TUI.
+/// Replaces the prefix and all following non-whitespace chars with [REDACTED].
+/// Best-effort: covers well-known prefixed tokens, not arbitrary high-entropy strings.
+pub(crate) fn redact_secrets(s: &str) -> String {
+    const PATTERNS: &[&str] = &[
+        // Anthropic / OpenAI / OpenRouter
+        "sk-ant-", "sk-proj-", "sk-or-",
+        // Stripe
+        "sk_live_", "sk_test_", "rk_live_", "rk_test_",
+        // GitHub
+        "ghp_", "gho_", "ghs_", "ghr_", "ghu_", "github_pat_",
+        // GitLab
+        "glpat-",
+        // Slack
+        "xoxb-", "xoxp-", "xoxa-", "xoxs-",
+        // AWS access key id
+        "AKIA", "ASIA",
+        // Bearer-prefixed headers
+        "Bearer ",
+    ];
+    let mut result = s.to_string();
+    for pat in PATTERNS {
+        while let Some(pos) = result.find(pat) {
+            let end = result[pos..]
+                .find(char::is_whitespace)
+                .map(|i| pos + i)
+                .unwrap_or(result.len());
+            result.replace_range(pos..end, "[REDACTED]");
+        }
+    }
+    result
+}
+
 use crate::model::{AgentSession, OrphanPort, RateLimitInfo, SessionStatus};
 use std::collections::HashMap;
 

@@ -763,7 +763,7 @@ fn extract_tool_arg(tool_use: &Value) -> String {
         // Bash: command (first 40 chars, redact secrets)
         if let Some(cmd) = input.get("command").and_then(|c| c.as_str()) {
             let short = cmd.lines().next().unwrap_or(cmd);
-            return redact_secrets(&truncate(short, 40));
+            return super::redact_secrets(&truncate(short, 40));
         }
         // Grep/Glob: pattern
         if let Some(pat) = input.get("pattern").and_then(|p| p.as_str()) {
@@ -771,26 +771,6 @@ fn extract_tool_arg(tool_use: &Value) -> String {
         }
     }
     String::new()
-}
-
-/// Redact common secret patterns to avoid displaying credentials in the TUI.
-/// Replaces the prefix and all following non-whitespace chars with [REDACTED].
-fn redact_secrets(s: &str) -> String {
-    let patterns = [
-        "sk_live_", "sk_test_", "sk-ant-", "ghp_", "gho_",
-        "glpat-", "xoxb-", "xoxp-", "AKIA",
-    ];
-    let mut result = s.to_string();
-    for pat in &patterns {
-        while let Some(pos) = result.find(pat) {
-            // Redact from prefix through end of contiguous non-whitespace
-            let end = result[pos..].find(char::is_whitespace)
-                .map(|i| pos + i)
-                .unwrap_or(result.len());
-            result.replace_range(pos..end, "[REDACTED]");
-        }
-    }
-    result
 }
 
 fn shorten_path(path: &str) -> String {

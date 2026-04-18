@@ -3,7 +3,7 @@ use crate::model::{AgentSession, ChildProcess, RateLimitInfo, SessionStatus};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -377,7 +377,7 @@ struct CodexJSONLResult {
 /// - turn_context: model, effort
 fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
     let file = fs::File::open(path).ok()?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
 
     let mut result = CodexJSONLResult {
         session_id: String::new(),
@@ -401,18 +401,33 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
         rate_limit: None,
     };
 
-    for line in reader.lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(_) => continue,
-        };
+    // Match Claude transcript cap: a malformed/hostile line beyond this size
+    // aborts the scan to prevent OOM. take(MAX+1) physically bounds the read.
+    const MAX_LINE_BYTES: usize = 10 * 1024 * 1024;
+    let mut line_buf = String::new();
+    loop {
+        line_buf.clear();
+        match reader
+            .by_ref()
+            .take(MAX_LINE_BYTES as u64 + 1)
+            .read_line(&mut line_buf)
+        {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+        // Cap hit without a newline — skip this file's remainder.
+        if line_buf.len() > MAX_LINE_BYTES && !line_buf.ends_with('\n') {
+            break;
+        }
+        let line = line_buf.trim();
         if line.is_empty() {
             continue;
         }
 
-        let val: Value = match serde_json::from_str(&line) {
+        let val: Value = match serde_json::from_str(line) {
             Ok(v) => v,
-            Err(_) => continue, // partial line at EOF
+            Err(_) => continue, // partial line at EOF or malformed
         };
 
         // Update last_activity from timestamp
@@ -460,7 +475,8 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                     }
                     Some("user_message") if result.initial_prompt.is_empty() => {
                         if let Some(msg) = payload["message"].as_str() {
-                            result.initial_prompt = msg.chars().take(120).collect();
+                            let truncated: String = msg.chars().take(120).collect();
+                            result.initial_prompt = super::redact_secrets(&truncated);
                         }
                     }
                     Some("token_count") => {
@@ -486,7 +502,9 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                                 .or_else(|| last["cache_read_input_tokens"].as_u64())
                                 .unwrap_or(0);
                             result.last_context_tokens = inp + cache;
-                            result.token_history.push(inp + out + cache);
+                            if result.token_history.len() < 10_000 {
+                                result.token_history.push(inp + out + cache);
+                            }
                         }
                         // Context window may also appear inside info
                         if let Some(cw) = info["model_context_window"].as_u64() {
@@ -552,9 +570,10 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         if arg.is_empty() {
                             result.current_task = name.to_string();
                         } else {
-                            // Shorten path: just filename
+                            // Shorten path: just filename, then redact any secrets
                             let short = arg.rsplit('/').next().unwrap_or(&arg);
-                            result.current_task = format!("{} {}", name, short);
+                            let redacted = super::redact_secrets(short);
+                            result.current_task = format!("{} {}", name, redacted);
                         }
                     }
                 }
