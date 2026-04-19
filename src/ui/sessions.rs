@@ -20,14 +20,16 @@ pub(crate) fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect, theme: &
         height: area.height.saturating_sub(2),
     };
 
-    // Session list: 1 header + 2 rows per visible session, plus subagent rows in tree view.
     let visible = app.visible_indices();
     let session_rows: u16 = visible.iter().map(|&i| {
         let base = 2u16;
         if app.tree_view { base + app.sessions[i].subagents.len() as u16 } else { base }
     }).sum();
-    // Fixed detail height: keeps the detail panel stable regardless of content
-    let detail_reserve: u16 = 10.min(inner.height / 2);
+    let detail_reserve: u16 = if app.show_timeline {
+        (inner.height * 2 / 3).min(inner.height.saturating_sub(5))
+    } else {
+        10.min(inner.height / 2)
+    };
     let max_table = inner.height.saturating_sub(detail_reserve);
     let table_h = (1 + session_rows).min(max_table);
 
@@ -627,18 +629,18 @@ pub(crate) fn shorten_model(model: &str, is_1m: bool) -> String {
     }
 }
 
-/// Tool name → color mapping for timeline bars.
-fn tool_color(name: &str) -> Color {
+/// Tool name → color mapping for timeline bars, using theme palette.
+fn tool_color(name: &str, theme: &Theme) -> Color {
     match name {
-        "Read"    => Color::Rgb(100, 149, 237), // cornflower blue
-        "Edit"    => Color::Rgb(255, 193, 37),  // golden yellow
-        "Write"   => Color::Rgb(0, 206, 209),   // dark turquoise
-        "Bash"    => Color::Rgb(80, 200, 120),   // emerald green
-        "Grep"    => Color::Rgb(186, 85, 211),   // medium orchid
-        "Glob"    => Color::Rgb(147, 112, 219),  // medium purple
-        "Agent"   => Color::Rgb(255, 127, 80),   // coral
-        "Skill"   => Color::Rgb(255, 105, 180),  // hot pink
-        _         => Color::Rgb(169, 169, 169),  // dark gray
+        "Read"    => theme.session_id,    // typically a warm accent
+        "Edit"    => theme.proc_misc,     // green/active color
+        "Write"   => theme.cpu_box,       // box/border accent
+        "Bash"    => theme.hi_fg,         // highlight foreground
+        "Grep"    => theme.status_fg,     // status accent
+        "Glob"    => theme.graph_text,    // subtle text
+        "Agent"   => theme.title,         // title/emphasis
+        "Skill"   => theme.selected_fg,   // selected foreground
+        _         => theme.inactive_fg,   // fallback
     }
 }
 
@@ -696,7 +698,7 @@ fn draw_timeline(
         let is_longest = tc.duration_ms == max_duration && max_duration > 0;
         let star = if is_longest { " *" } else { "" };
 
-        let color = tool_color(&tc.name);
+        let color = tool_color(&tc.name, theme);
 
         lines.push(Line::from(vec![
             Span::styled(format!(" {:<6}", tc.name), Style::default().fg(color).add_modifier(Modifier::BOLD)),
