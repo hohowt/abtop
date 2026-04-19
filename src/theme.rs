@@ -10,6 +10,7 @@ pub struct Theme {
     pub name: &'static str,
 
     // base
+    pub main_bg: Color,
     pub main_fg: Color,
     pub title: Color,
     pub hi_fg: Color,
@@ -80,6 +81,7 @@ impl Theme {
     pub fn btop() -> Self {
         Self {
             name: "btop",
+            main_bg: Color::Rgb(25, 25, 25),
             main_fg: Color::Rgb(204, 204, 204),
             title: Color::Rgb(238, 238, 238),
             hi_fg: Color::Rgb(181, 64, 64),
@@ -128,6 +130,7 @@ impl Theme {
     pub fn dracula() -> Self {
         Self {
             name: "dracula",
+            main_bg: Color::Rgb(40, 42, 54),
             main_fg: Color::Rgb(248, 248, 242),
             title: Color::Rgb(248, 248, 242),
             hi_fg: Color::Rgb(255, 121, 198),
@@ -177,6 +180,7 @@ impl Theme {
         // Catppuccin Mocha palette
         Self {
             name: "catppuccin",
+            main_bg: Color::Rgb(30, 30, 46),
             main_fg: Color::Rgb(205, 214, 244),
             title: Color::Rgb(205, 214, 244),
             hi_fg: Color::Rgb(243, 139, 168),
@@ -226,6 +230,7 @@ impl Theme {
         // Tokyo Night — night variant
         Self {
             name: "tokyo-night",
+            main_bg: Color::Rgb(26, 27, 38),           // bg #1a1b26
             main_fg: Color::Rgb(169, 177, 214),        // fg_dark #a9b1d6
             title: Color::Rgb(192, 202, 245),          // fg #c0caf5
             hi_fg: Color::Rgb(247, 118, 142),          // red #f7768e
@@ -275,6 +280,7 @@ impl Theme {
         // gruvbox dark — bright accent variants for TUI visibility
         Self {
             name: "gruvbox",
+            main_bg: Color::Rgb(40, 40, 40),          // bg0 #282828
             main_fg: Color::Rgb(235, 219, 178),       // fg1 #ebdbb2
             title: Color::Rgb(251, 241, 199),          // fg0 #fbf1c7
             hi_fg: Color::Rgb(251, 73, 52),            // bright red #fb4934
@@ -324,6 +330,7 @@ impl Theme {
         // Nord — arctic color palette
         Self {
             name: "nord",
+            main_bg: Color::Rgb(46, 52, 64),           // nord0 #2e3440
             main_fg: Color::Rgb(216, 222, 233),        // nord4 #d8dee9
             title: Color::Rgb(236, 239, 244),          // nord6 #eceff4
             hi_fg: Color::Rgb(191, 97, 106),           // nord11 red #bf616a
@@ -375,6 +382,7 @@ impl Theme {
     pub fn high_contrast() -> Self {
         Self {
             name: "high-contrast",
+            main_bg: Color::Rgb(0, 0, 0),
             main_fg: Color::Rgb(255, 255, 255),
             title: Color::Rgb(255, 255, 255),
             hi_fg: Color::Rgb(255, 255, 0),
@@ -426,6 +434,7 @@ impl Theme {
     pub fn protanopia() -> Self {
         Self {
             name: "protanopia",
+            main_bg: Color::Rgb(20, 20, 32),
             main_fg: Color::Rgb(220, 220, 220),
             title: Color::Rgb(255, 255, 255),
             hi_fg: Color::Rgb(254, 97, 0),            // orange
@@ -477,6 +486,7 @@ impl Theme {
     pub fn deuteranopia() -> Self {
         Self {
             name: "deuteranopia",
+            main_bg: Color::Rgb(18, 24, 40),
             main_fg: Color::Rgb(222, 222, 230),
             title: Color::Rgb(255, 255, 255),
             hi_fg: Color::Rgb(255, 194, 10),          // amber
@@ -527,6 +537,7 @@ impl Theme {
     pub fn tritanopia() -> Self {
         Self {
             name: "tritanopia",
+            main_bg: Color::Rgb(24, 20, 22),
             main_fg: Color::Rgb(224, 224, 224),
             title: Color::Rgb(255, 255, 255),
             hi_fg: Color::Rgb(220, 50, 47),           // red

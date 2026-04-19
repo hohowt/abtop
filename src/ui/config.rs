@@ -18,6 +18,7 @@ pub(crate) fn draw_config_overlay(f: &mut Frame, app: &App, theme: &Theme) {
     f.render_widget(Clear, popup);
 
     let block = Block::default()
+        .style(Style::default().bg(theme.main_bg))
         .title(Line::from(vec![
             Span::styled(
                 " Config ",

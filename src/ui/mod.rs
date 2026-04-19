@@ -248,6 +248,14 @@ pub fn draw(f: &mut Frame, app: &App) {
     let w = area.width;
     let h = area.height;
 
+    // Paint the entire frame with the theme's background so the app renders
+    // correctly on light-background terminals (where text would otherwise be
+    // light-on-light and unreadable).
+    f.render_widget(
+        Block::default().style(Style::default().bg(theme.main_bg).fg(theme.main_fg)),
+        area,
+    );
+
     if w < MIN_WIDTH || h < MIN_HEIGHT {
         let msg = vec![
             Line::from(Span::styled(
