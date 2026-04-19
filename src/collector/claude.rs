@@ -1,5 +1,5 @@
 use super::process::{self, ProcInfo};
-use crate::model::{AgentSession, ChildProcess, SessionFile, SessionStatus, SubAgent};
+use crate::model::{AgentSession, ChildProcess, FileAccess, FileOp, SessionFile, SessionStatus, SubAgent, MAX_FILE_ACCESSES};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -336,6 +336,10 @@ impl ClaudeCollector {
                     if prev.initial_prompt.is_empty() && !delta.initial_prompt.is_empty() {
                         prev.initial_prompt = delta.initial_prompt;
                     }
+                    prev.file_accesses.extend(delta.file_accesses);
+                    if prev.file_accesses.len() > MAX_FILE_ACCESSES {
+                        prev.file_accesses.truncate(MAX_FILE_ACCESSES);
+                    }
                     prev.new_offset = delta.new_offset;
                     self.transcript_cache.insert(sf.session_id.clone(), prev);
                 }
@@ -365,8 +369,11 @@ impl ClaudeCollector {
             token_history: Vec::new(),
             initial_prompt: String::new(),
             first_assistant_text: String::new(),
-            tool_calls: Vec::new(), last_assistant_ts_ms: 0, last_user_ts_ms: 0,
+            tool_calls: Vec::new(),
+            last_assistant_ts_ms: 0,
+            last_user_ts_ms: 0,
             saw_turn: false,
+            file_accesses: Vec::new(),
         };
         let cached = self
             .transcript_cache
@@ -391,6 +398,7 @@ impl ClaudeCollector {
         let initial_prompt = cached.initial_prompt.clone();
         let first_assistant_text = cached.first_assistant_text.clone();
         let tool_calls = cached.tool_calls.clone();
+        let file_accesses = cached.file_accesses.clone();
 
         if !pid_alive {
             return None;
@@ -400,18 +408,25 @@ impl ClaudeCollector {
             let since_activity = std::time::SystemTime::now()
                 .duration_since(last_activity)
                 .unwrap_or_default();
+            let has_tool = !current_task.is_empty();
             if since_activity.as_secs() < 30 {
-                SessionStatus::Working
+                if has_tool {
+                    SessionStatus::Executing
+                } else {
+                    SessionStatus::Thinking
+                }
             } else {
                 // Transcript is stale (>30s). Check CPU-based signals:
-                // 1. Claude process using CPU > 1% → likely thinking/streaming
+                // 1. Claude process using CPU > 1% -> likely thinking/streaming
                 let claude_cpu_active = proc.is_some_and(|p| p.cpu_pct > 1.0);
-                // 2. Any descendant using significant CPU (>5%) → likely running a tool
+                // 2. Any descendant using significant CPU (>5%) -> likely running a tool
                 //    (higher threshold avoids false positives from idle watchers/servers)
                 let has_active_descendant =
                     process::has_active_descendant(sf.pid, children_map, process_info, 5.0);
-                if claude_cpu_active || has_active_descendant {
-                    SessionStatus::Working
+                if has_active_descendant || has_tool {
+                    SessionStatus::Executing
+                } else if claude_cpu_active {
+                    SessionStatus::Thinking
                 } else {
                     SessionStatus::Waiting
                 }
@@ -517,6 +532,7 @@ impl ClaudeCollector {
             tool_calls,
             pending_since_ms: cached.last_assistant_ts_ms,
             thinking_since_ms: cached.last_user_ts_ms,
+            file_accesses,
         })
     }
 
@@ -894,9 +910,11 @@ struct TranscriptResult {
     last_user_ts_ms: u64,
     /// True when this parse observed at least one `user` or `assistant`
     /// line. When false the timestamp fields above are just defaults and
-    /// must not overwrite cached state — otherwise a no-new-data tick
+    /// must not overwrite cached state - otherwise a no-new-data tick
     /// would clear the live pending/thinking markers.
     saw_turn: bool,
+    /// File access audit log extracted from tool_use entries.
+    file_accesses: Vec<FileAccess>,
 }
 
 /// Check if a path is a symlink without following it.
@@ -950,6 +968,7 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
         last_assistant_ts_ms: 0,
         last_user_ts_ms: 0,
         saw_turn: false,
+        file_accesses: Vec::new(),
     };
 
     let file = match fs::File::open(path) {
@@ -1118,7 +1137,7 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                         }
                                     }
                                 }
-                                // Extract ALL tool_use entries for timeline + last for current_task
+                                // Extract all tool_use entries: timeline + current_task + file access audit
                                 if let Some(content) = msg.get("content").and_then(|c| c.as_array())
                                 {
                                     for item in content {
@@ -1130,6 +1149,7 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                                 .and_then(|n| n.as_str())
                                                 .unwrap_or("?");
                                             let arg = extract_tool_arg(item);
+                                            // Last tool_use in forward order wins current_task
                                             result.current_task = format!("{} {}", tool, arg);
                                             if result.tool_calls.len() < 500 {
                                                 result.tool_calls.push(crate::model::ToolCall {
@@ -1137,6 +1157,28 @@ fn parse_transcript(path: &Path, from_offset: u64) -> TranscriptResult {
                                                     arg: truncate(&arg, 40),
                                                     duration_ms: 0, // filled on next user turn
                                                 });
+                                            }
+                                            // Extract file access audit entries
+                                            if result.file_accesses.len() < MAX_FILE_ACCESSES {
+                                                if let Some(file_path) = item
+                                                    .get("input")
+                                                    .and_then(|i| i.get("file_path"))
+                                                    .and_then(|f| f.as_str())
+                                                {
+                                                    let op = match tool {
+                                                        "Read" => Some(FileOp::Read),
+                                                        "Edit" => Some(FileOp::Edit),
+                                                        "Write" => Some(FileOp::Write),
+                                                        _ => None,
+                                                    };
+                                                    if let Some(op) = op {
+                                                        result.file_accesses.push(FileAccess {
+                                                            path: file_path.to_string(),
+                                                            operation: op,
+                                                            turn_index: result.turn_count,
+                                                        });
+                                                    }
+                                                }
                                             }
                                         }
                                     }

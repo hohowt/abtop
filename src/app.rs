@@ -74,6 +74,7 @@ pub struct App {
     pub filter_active: bool,
     pub show_timeline: bool,
     pub timeline_scroll: usize,
+    pub show_file_audit: bool,
 }
 
 impl App {
@@ -110,6 +111,7 @@ impl App {
             filter_active: false,
             show_timeline: false,
             timeline_scroll: 0,
+            show_file_audit: false,
         }
     }
 
@@ -122,6 +124,10 @@ impl App {
             5 => self.show_sessions = !self.show_sessions,
             _ => {}
         }
+    }
+
+    pub fn toggle_file_audit(&mut self) {
+        self.show_file_audit = !self.show_file_audit;
     }
 
     pub fn toggle_config(&mut self) {
@@ -215,6 +221,18 @@ impl App {
             self.rate_limits.extend(self.collector.agent_rate_limits());
         } else {
             self.rate_limit_counter += 1;
+        }
+
+        // Post-process: promote Waiting sessions to RateLimited when rate limits > 90%
+        let any_rate_limited = self.rate_limits.iter().any(|rl| {
+            rl.five_hour_pct.unwrap_or(0.0) > 90.0 || rl.seven_day_pct.unwrap_or(0.0) > 90.0
+        });
+        if any_rate_limited {
+            for s in &mut self.sessions {
+                if s.status == SessionStatus::Waiting {
+                    s.status = SessionStatus::RateLimited;
+                }
+            }
         }
 
         self.drain_and_retry_summaries();

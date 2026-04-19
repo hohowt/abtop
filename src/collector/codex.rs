@@ -167,6 +167,7 @@ impl CodexCollector {
         // so task_complete alone does NOT mean the session is finished when PID is alive.
         // However, for exec (one-shot) sessions, task_complete means truly done.
         let pid_alive = proc.is_some();
+        let has_tool = !result.current_task.is_empty();
         let status = if !pid_alive || (is_exec && result.task_complete) {
             SessionStatus::Done
         } else {
@@ -174,14 +175,20 @@ impl CodexCollector {
                 .duration_since(result.last_activity)
                 .unwrap_or_default();
             if since_activity.as_secs() < 30 {
-                SessionStatus::Working
+                if has_tool {
+                    SessionStatus::Executing
+                } else {
+                    SessionStatus::Thinking
+                }
             } else {
                 let cpu_active = proc.is_some_and(|p| p.cpu_pct > 1.0);
                 let has_active_child = pid.is_some_and(|p| {
                     process::has_active_descendant(p, children_map, process_info, 5.0)
                 });
-                if cpu_active || has_active_child {
-                    SessionStatus::Working
+                if has_active_child || has_tool {
+                    SessionStatus::Executing
+                } else if cpu_active {
+                    SessionStatus::Thinking
                 } else {
                     SessionStatus::Waiting
                 }
@@ -275,6 +282,7 @@ impl CodexCollector {
             tool_calls: vec![],
             pending_since_ms: 0,
             thinking_since_ms: 0,
+            file_accesses: vec![],
         }, rate_limit))
     }
 
