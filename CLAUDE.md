@@ -34,7 +34,7 @@ src/
 │  token rate (200pt history)            S2 prediction  █████████91%⚠ │
 │                                        S3 api-server  ███      22%  │
 └──────────────────────────────────────────────────────────────────────┘
-┌─ ²quota ─────┐┌─ ³tokens ───┐┌─ ⁴projects ──┐┌─ ⁵ports ──────────┐
+┌─ ²quota ─────┐┌─ ³tokens ───┐┌─ projects ───┐┌─ ⁴ports ──────────┐
 │ CLAUDE       ││ Total  1.2M ││ abtop        ││ PORT  SESSION  CMD │
 │ 5h ████ 35%  ││ Input  402k ││  main +3 ~18 ││ :3000 api-srv node│
 │   resets 2h  ││ Output  89k ││              ││ :8080 predict crgo│
@@ -44,7 +44,7 @@ src/
 │ 5h █ 9%     ││ Avg: 25k/t  ││ api-server   ││                    │
 │ 7d ██ 14%    ││             ││  main ✓clean ││                    │
 └──────────────┘└─────────────┘└──────────────┘└────────────────────┘
-┌─ ⁶sessions ─────────────────────────────────────────────────────────┐
+┌─ ⁵sessions ─────────────────────────────────────────────────────────┐
 │ ►*CC 7336 abtop  ● Work opus  82% 1.2M  48  Edit src/pay.rs       │
 │  >CD 8840 pred   ◌ Wait sonn  91% 340k  12  waiting                │
 │ ─────────────────────────────────────────────────────────────────── │
@@ -67,9 +67,9 @@ Panel descriptions:
 - **¹context**: Left = token rate braille sparkline (200-point history). Right = per-session context % bars with yellow/red warning.
 - **²quota**: Claude + Codex rate limit gauges side-by-side (5h and 7d windows with reset countdown).
 - **³tokens**: Total token breakdown (in/out/cache) + per-turn sparkline for selected session.
-- **⁴projects**: Per-project git branch + added/modified file counts.
-- **⁵ports**: Agent-spawned open ports + orphan ports (from dead sessions). Conflict detection.
-- **⁶sessions**: Full-width panel below mid row. Session list table (top) + selected session detail (bottom), separated by divider.
+- **projects** (always visible): Per-project git branch + added/modified file counts.
+- **⁴ports**: Agent-spawned open ports + orphan ports (from dead sessions). Conflict detection.
+- **⁵sessions**: Full-width panel below mid row. Session list table (top) + selected session detail (bottom), separated by divider.
 
 ## Data Sources
 

@@ -55,12 +55,18 @@ pub struct App {
     /// Kill confirmation: (selected_index, timestamp). Expires after 2s.
     kill_confirm: Option<(usize, Instant)>,
     pub theme: Theme,
+    pub show_context: bool,
+    pub show_quota: bool,
+    pub show_tokens: bool,
+    pub show_ports: bool,
+    pub show_sessions: bool,
+    pub config_open: bool,
+    pub config_selected: usize,
 }
 
 impl App {
     pub fn new(theme: Theme) -> Self {
         let (tx, rx) = mpsc::channel();
-        // Load cached summaries from disk
         let summaries = load_summary_cache();
         Self {
             sessions: Vec::new(),
@@ -69,7 +75,7 @@ impl App {
             token_rates: VecDeque::with_capacity(GRAPH_HISTORY_LEN),
             rate_limits: Vec::new(),
             prev_tokens: HashMap::new(),
-            rate_limit_counter: 5, // trigger on first tick
+            rate_limit_counter: 5,
             collector: MultiCollector::new(),
             summaries,
             pending_summaries: HashSet::new(),
@@ -80,6 +86,57 @@ impl App {
             status_msg: None,
             kill_confirm: None,
             theme,
+            show_context: true,
+            show_quota: true,
+            show_tokens: true,
+            show_ports: true,
+            show_sessions: true,
+            config_open: false,
+            config_selected: 0,
+        }
+    }
+
+    pub fn toggle_panel(&mut self, panel: u8) {
+        match panel {
+            1 => self.show_context = !self.show_context,
+            2 => self.show_quota = !self.show_quota,
+            3 => self.show_tokens = !self.show_tokens,
+            4 => self.show_ports = !self.show_ports,
+            5 => self.show_sessions = !self.show_sessions,
+            _ => {}
+        }
+    }
+
+    pub fn toggle_config(&mut self) {
+        self.config_open = !self.config_open;
+        if self.config_open {
+            self.config_selected = 0;
+        }
+    }
+
+    pub fn config_item_count(&self) -> usize {
+        6 // theme + 5 panel toggles
+    }
+
+    pub fn config_select_next(&mut self) {
+        if self.config_selected + 1 < self.config_item_count() {
+            self.config_selected += 1;
+        }
+    }
+
+    pub fn config_select_prev(&mut self) {
+        self.config_selected = self.config_selected.saturating_sub(1);
+    }
+
+    pub fn config_toggle_selected(&mut self) {
+        match self.config_selected {
+            0 => self.cycle_theme(),
+            1 => self.show_context = !self.show_context,
+            2 => self.show_quota = !self.show_quota,
+            3 => self.show_tokens = !self.show_tokens,
+            4 => self.show_ports = !self.show_ports,
+            5 => self.show_sessions = !self.show_sessions,
+            _ => {}
         }
     }
 
@@ -129,7 +186,8 @@ impl App {
         // Poll rate limits: first tick immediately, then every 5 ticks ≈ 10s
         if self.rate_limits.is_empty() || self.rate_limit_counter >= 5 {
             self.rate_limit_counter = 0;
-            self.rate_limits = read_rate_limits();
+            let extra_dirs = self.collector.all_config_dirs();
+            self.rate_limits = read_rate_limits(&extra_dirs);
             // Merge live rate limits from agent collectors (e.g. Codex JSONL parsing)
             self.rate_limits.extend(self.collector.agent_rate_limits());
         } else {

@@ -115,6 +115,8 @@ Theme support contributed by [@tbouquet](https://github.com/tbouquet).
 | `x`                | Kill selected session                |
 | `X`                | Kill all orphan ports                |
 | `t`                | Cycle theme                          |
+| `1`–`5`            | Toggle panel visibility              |
+| `Esc`              | Open/close config page               |
 | `q`                | Quit                                 |
 | `r`                | Force refresh                        |
 
