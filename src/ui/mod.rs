@@ -288,9 +288,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     const CONTEXT_MIN: u16 = 5;
     const FIXED: u16 = 2; // header + footer
 
-    let any_mid = app.show_quota || app.show_tokens || app.show_ports;
+    // Projects panel is always visible, so the mid row always renders.
+    let any_mid = true;
 
-    let mid_h_ideal: u16 = if any_mid { 8 } else { 0 };
+    let mid_h_ideal: u16 = 8;
     let sessions_ideal: u16 = if app.show_sessions {
         (app.sessions.len() as u16 * 2 + 7).max(8)
     } else {

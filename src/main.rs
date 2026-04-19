@@ -126,11 +126,10 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: boo
                 if key.kind == KeyEventKind::Press {
                     if app.config_open {
                         match key.code {
-                            KeyCode::Esc => app.toggle_config(),
+                            KeyCode::Esc | KeyCode::Char('q') => app.toggle_config(),
                             KeyCode::Down | KeyCode::Char('j') => app.config_select_next(),
                             KeyCode::Up | KeyCode::Char('k') => app.config_select_prev(),
                             KeyCode::Enter | KeyCode::Char(' ') => app.config_toggle_selected(),
-                            KeyCode::Char('q') => app.quit(),
                             _ => {}
                         }
                     } else {
@@ -143,7 +142,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, demo_mode: boo
                             KeyCode::Char('X') if !demo_mode => app.kill_orphan_ports(),
                             KeyCode::Char('t') => app.cycle_theme(),
                             KeyCode::Char(c @ '1'..='5') => app.toggle_panel(c as u8 - b'0'),
-                            KeyCode::Esc => app.toggle_config(),
+                            KeyCode::Char('c') => app.toggle_config(),
                             KeyCode::Enter if !demo_mode => {
                                 if let Some(msg) = app.jump_to_session() {
                                     app.set_status(msg);
