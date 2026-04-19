@@ -508,6 +508,24 @@ pub(crate) fn draw_sessions_panel(f: &mut Frame, app: &App, area: Rect, theme: &
                     Style::default().fg(mem_color),
                 )));
             }
+            // Context evolution sparkline (if history available)
+            if !session.context_history.is_empty() && session.context_window > 0 {
+                let normalized: Vec<f64> = session.context_history.iter()
+                    .map(|&v| (v as f64 / session.context_window as f64).min(1.0))
+                    .collect();
+                let spark_w = (detail_footer.width as usize).saturating_sub(16).clamp(4, 40);
+                let mut ctx_spans = vec![
+                    Span::styled(" CTX ", Style::default().fg(theme.graph_text)),
+                ];
+                ctx_spans.extend(super::braille_sparkline(&normalized, spark_w, &cpu_grad, theme.graph_text));
+                if session.compaction_count > 0 {
+                    ctx_spans.push(Span::styled(
+                        format!(" C{}", session.compaction_count),
+                        Style::default().fg(grad_at(&cpu_grad, 80.0)),
+                    ));
+                }
+                footer_lines.push(Line::from(ctx_spans));
+            }
             let effort_part = if session.effort.is_empty() {
                 String::new()
             } else {
