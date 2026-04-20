@@ -103,11 +103,7 @@ fn draw_source_column(
     let ago_secs = rl.updated_at.map(|ts| now.saturating_sub(ts));
     let is_stale = ago_secs.is_some_and(|s| s > STALE_SECS);
 
-    let fresh_str = ago_secs.map(|ago| {
-        if ago < 60 { format!(" {}s ago", ago) }
-        else if ago < 3600 { format!(" {}m ago", ago / 60) }
-        else { format!(" {}h ago", ago / 3600) }
-    }).unwrap_or_default();
+    let fresh_str = ago_secs.map(format_ago).unwrap_or_default();
     let fresh_color = if is_stale { theme.inactive_fg } else { theme.graph_text };
 
     let mut lines: Vec<Line> = Vec::new();
@@ -146,6 +142,19 @@ fn draw_source_column(
     }
 
     f.render_widget(Paragraph::new(lines), area);
+}
+
+/// Format an "N ago" badge with auto-scaling unit (s → m → h → d).
+fn format_ago(secs: u64) -> String {
+    if secs < 60 {
+        format!(" {}s ago", secs)
+    } else if secs < 3600 {
+        format!(" {}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!(" {}h ago", secs / 3600)
+    } else {
+        format!(" {}d ago", secs / 86400)
+    }
 }
 
 /// Format a reset timestamp as relative time (e.g., "1h 23m")
