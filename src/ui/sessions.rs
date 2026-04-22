@@ -702,15 +702,53 @@ fn draw_timeline(
         return;
     }
 
-    let total_duration: u64 = tool_calls.iter().map(|tc| tc.duration_ms).sum();
-    let max_duration = tool_calls.iter().map(|tc| tc.duration_ms).max().unwrap_or(1).max(1);
+    // Live duration for any tool still in flight. The collector leaves
+    // `duration_ms == 0` on tools whose assistant turn hasn't been closed yet;
+    // combined with `pending_since_ms > 0` that means "tool started at
+    // pending_since_ms and is still running right now." We compute the elapsed
+    // ms on every frame so the bar appears to grow in real time.
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let live_duration = |tc: &crate::model::ToolCall| -> u64 {
+        if tc.duration_ms > 0 {
+            tc.duration_ms
+        } else if session.pending_since_ms > 0 {
+            now_ms.saturating_sub(session.pending_since_ms)
+        } else {
+            0
+        }
+    };
+    let is_pending = |tc: &crate::model::ToolCall| -> bool {
+        tc.duration_ms == 0 && session.pending_since_ms > 0
+    };
+
+    let total_duration: u64 = tool_calls.iter().map(live_duration).sum();
+    let max_duration = tool_calls
+        .iter()
+        .map(live_duration)
+        .max()
+        .unwrap_or(1)
+        .max(1);
 
     let mut lines = Vec::new();
 
-    // Header
+    // Header — note "1 running" if any tool is live.
+    let pending_count = tool_calls.iter().filter(|tc| is_pending(tc)).count();
+    let running_note = if pending_count > 0 {
+        format!(", {} running", pending_count)
+    } else {
+        String::new()
+    };
     lines.push(Line::from(vec![
         Span::styled(
-            format!(" TIMELINE ({} calls, {})", tool_calls.len(), fmt_duration(total_duration)),
+            format!(
+                " TIMELINE ({} calls, {}{})",
+                tool_calls.len(),
+                fmt_duration(total_duration),
+                running_note,
+            ),
             Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
         ),
     ]));
@@ -723,37 +761,66 @@ fn draw_timeline(
     let start = scroll.min(tool_calls.len().saturating_sub(visible_rows));
 
     for tc in tool_calls.iter().skip(start).take(visible_rows) {
+        let duration = live_duration(tc);
+        let pending = is_pending(tc);
         let bar_fill = if max_duration > 0 {
-            ((tc.duration_ms as f64 / max_duration as f64) * bar_width as f64).ceil() as usize
+            ((duration as f64 / max_duration as f64) * bar_width as f64).ceil() as usize
         } else {
             0
         };
         let bar_fill = bar_fill.min(bar_width);
         let bar_empty = bar_width - bar_fill;
 
-        let is_longest = tc.duration_ms == max_duration && max_duration > 0;
+        let is_longest = duration == max_duration && max_duration > 0 && !pending;
         let star = if is_longest { " *" } else { "" };
 
         let color = tool_color(&tc.name, theme);
+        // Prefix running rows with a pulsing ● so they're obvious at a glance.
+        // The pulse is cheap: flip between bright/dim on a 2-tick (~4s) cycle
+        // using the same clock we used for the live duration.
+        let pulse_bright = pending && (now_ms / 500).is_multiple_of(2);
+        let name_prefix = if pending { "●" } else { " " };
+        let name_style = if pending {
+            Style::default()
+                .fg(color)
+                .add_modifier(if pulse_bright { Modifier::BOLD } else { Modifier::DIM })
+        } else {
+            Style::default().fg(color).add_modifier(Modifier::BOLD)
+        };
+        let bar_style = if pending {
+            Style::default().fg(color).add_modifier(Modifier::DIM)
+        } else {
+            Style::default().fg(color)
+        };
+
+        let duration_label = if pending {
+            format!(" {:>5}…", fmt_duration(duration))
+        } else {
+            format!(" {:>6}{}", fmt_duration(duration), star)
+        };
+        let duration_color = if is_longest {
+            theme.proc_misc
+        } else if pending {
+            color
+        } else {
+            theme.graph_text
+        };
 
         lines.push(Line::from(vec![
-            Span::styled(format!(" {:<6}", tc.name), Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}{:<6}", name_prefix, tc.name), name_style),
             Span::styled(
                 format!(" {:<20}", super::truncate_str(&tc.arg, 20)),
                 Style::default().fg(theme.graph_text),
             ),
             Span::styled(" ", Style::default()),
-            Span::styled(
-                "█".repeat(bar_fill),
-                Style::default().fg(color),
-            ),
+            Span::styled("█".repeat(bar_fill), bar_style),
             Span::styled(
                 "░".repeat(bar_empty),
                 Style::default().fg(theme.div_line),
             ),
             Span::styled(
-                format!(" {:>6}{}", fmt_duration(tc.duration_ms), star),
-                Style::default().fg(if is_longest { theme.proc_misc } else { theme.graph_text }),
+                duration_label,
+                Style::default().fg(duration_color),
             ),
         ]));
     }

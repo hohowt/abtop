@@ -103,6 +103,11 @@ pub struct AgentSession {
     pub first_assistant_text: String,
     /// Timeline of tool calls extracted from transcript.
     pub tool_calls: Vec<ToolCall>,
+    /// Unix-epoch ms of the assistant turn whose `tool_use` blocks are still
+    /// awaiting the matching `user` response. Zero when the latest assistant
+    /// turn has already been closed (no tools currently in flight).
+    /// Used to animate the timeline bar for the running tool(s).
+    pub pending_since_ms: u64,
 }
 
 impl AgentSession {
@@ -204,6 +209,7 @@ mod tests {
             initial_prompt: String::new(),
             first_assistant_text: String::new(),
             tool_calls: Vec::new(),
+            pending_since_ms: 0,
         }
     }
 

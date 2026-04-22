@@ -110,7 +110,10 @@ pub fn populate_demo(app: &mut App) {
                 ToolCall { name: "Bash".into(), arg: "cargo clippy".into(), duration_ms: 5100 },
                 ToolCall { name: "Edit".into(), arg: "src/checkout/payment.rs".into(), duration_ms: 145 },
                 ToolCall { name: "Bash".into(), arg: "cargo test".into(), duration_ms: 7800 },
+                // Currently running — timeline bar grows in real time.
+                ToolCall { name: "WebSearch".into(), arg: "stripe webhook best practice".into(), duration_ms: 0 },
             ],
+            pending_since_ms: now - 6_000, // 6s ago → bar animates
         },
         AgentSession {
             agent_cli: "claude",
@@ -157,6 +160,7 @@ pub fn populate_demo(app: &mut App) {
             first_assistant_text: String::new(),
             initial_prompt: "Add batch inference endpoint with GPU scheduling".into(),
             tool_calls: vec![],
+            pending_since_ms: 0,
         },
         AgentSession {
             agent_cli: "claude",
@@ -221,6 +225,7 @@ pub fn populate_demo(app: &mut App) {
                 ToolCall { name: "Edit".into(), arg: "src/server.ts".into(), duration_ms: 110 },
                 ToolCall { name: "Bash".into(), arg: "npm run dev".into(), duration_ms: 1500 },
             ],
+            pending_since_ms: 0,
         },
         AgentSession {
             agent_cli: "codex",
@@ -265,6 +270,7 @@ pub fn populate_demo(app: &mut App) {
             first_assistant_text: String::new(),
             initial_prompt: "Create interactive heatmap component with D3.js".into(),
             tool_calls: vec![],
+            pending_since_ms: 0,
         },
     ];
 

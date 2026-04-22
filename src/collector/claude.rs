@@ -506,6 +506,7 @@ impl ClaudeCollector {
             initial_prompt,
             first_assistant_text,
             tool_calls,
+            pending_since_ms: cached.last_assistant_ts_ms,
         })
     }
 
