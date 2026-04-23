@@ -185,17 +185,7 @@ impl CodexCollector {
                 let has_active_child = pid.is_some_and(|p| {
                     process::has_active_descendant(p, children_map, process_info, 5.0)
                 });
-                // Only trust `has_tool` alongside a live CPU signal on a
-                // descendant. A crashed/interrupted session whose last turn
-                // ended on a tool_use keeps current_task non-empty forever;
-                // without this guard it would be stuck as Executing.
-                if has_active_child {
-                    SessionStatus::Executing
-                } else if cpu_active {
-                    SessionStatus::Thinking
-                } else {
-                    SessionStatus::Waiting
-                }
+                super::stale_status(has_active_child, cpu_active)
             }
         };
 

@@ -469,26 +469,12 @@ impl ClaudeCollector {
                     SessionStatus::Thinking
                 }
             } else {
-                // Transcript is stale (>30s). Check CPU-based signals:
-                // 1. Claude process using CPU > 1% -> likely thinking/streaming
-                let claude_cpu_active = proc.is_some_and(|p| p.cpu_pct > 1.0);
-                // 2. Any descendant using significant CPU (>5%) -> likely running a tool
-                //    (higher threshold avoids false positives from idle watchers/servers)
+                // Transcript stale (>30s): CPU-only signals. 5% descendant
+                // threshold avoids false positives from idle watchers.
+                let cpu_active = proc.is_some_and(|p| p.cpu_pct > 1.0);
                 let has_active_descendant =
                     process::has_active_descendant(sf.pid, children_map, process_info, 5.0);
-                // `has_tool` alone is not enough to infer Executing on a stale
-                // transcript: a session whose final assistant turn ended on a
-                // tool_use and then died (interrupted/crashed) keeps
-                // current_task non-empty forever. Only trust it when paired
-                // with live CPU activity on a descendant (the tool actually
-                // running) to avoid a permanent false-positive Executing.
-                if has_active_descendant {
-                    SessionStatus::Executing
-                } else if claude_cpu_active {
-                    SessionStatus::Thinking
-                } else {
-                    SessionStatus::Waiting
-                }
+                super::stale_status(has_active_descendant, cpu_active)
             }
         };
 

@@ -7,6 +7,27 @@ pub use claude::ClaudeCollector;
 pub use codex::CodexCollector;
 pub use rate_limit::read_rate_limits;
 
+/// Resolve status for a session whose transcript is stale (> 30s without a
+/// new turn). Shared between Claude and Codex collectors so both agree on
+/// the Executing/Thinking/Waiting fallback and stay in sync.
+///
+/// `has_active_descendant` must be derived from a real CPU/tree signal;
+/// `has_tool` alone is intentionally not accepted here - a crashed session
+/// whose final turn ended on a tool_use would otherwise be stuck Executing.
+pub(crate) fn stale_status(
+    has_active_descendant: bool,
+    cpu_active: bool,
+) -> crate::model::SessionStatus {
+    use crate::model::SessionStatus;
+    if has_active_descendant {
+        SessionStatus::Executing
+    } else if cpu_active {
+        SessionStatus::Thinking
+    } else {
+        SessionStatus::Waiting
+    }
+}
+
 /// Redact common secret patterns to avoid displaying credentials in the TUI.
 /// Replaces the prefix and all following non-whitespace chars with [REDACTED].
 /// Best-effort: covers well-known prefixed tokens, not arbitrary high-entropy strings.

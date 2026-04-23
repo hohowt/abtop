@@ -708,21 +708,29 @@ fn save_summary_cache(summaries: &HashMap<String, String>) {
     }
 }
 
+/// Threshold above which a rate-limited bucket is surfaced as RateLimited
+/// in the session list. 90% leaves enough headroom to catch near-saturation
+/// before the account actually blocks.
+const RATE_LIMITED_PCT: f64 = 90.0;
+
 /// Promote Waiting sessions to RateLimited when a rate limit from the SAME
-/// agent CLI is over the 90% threshold. Matching on source avoids a
+/// agent CLI is over `RATE_LIMITED_PCT`. Matching on source avoids a
 /// Claude-only saturation freezing Codex sessions and vice versa.
 fn promote_waiting_to_rate_limited(
     sessions: &mut [AgentSession],
     rate_limits: &[RateLimitInfo],
 ) {
+    if rate_limits.is_empty() {
+        return;
+    }
     for s in sessions.iter_mut() {
         if s.status != SessionStatus::Waiting {
             continue;
         }
         let over = rate_limits.iter().any(|rl| {
             rl.source == s.agent_cli
-                && (rl.five_hour_pct.unwrap_or(0.0) > 90.0
-                    || rl.seven_day_pct.unwrap_or(0.0) > 90.0)
+                && (rl.five_hour_pct.unwrap_or(0.0) > RATE_LIMITED_PCT
+                    || rl.seven_day_pct.unwrap_or(0.0) > RATE_LIMITED_PCT)
         });
         if over {
             s.status = SessionStatus::RateLimited;
