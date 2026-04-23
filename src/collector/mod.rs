@@ -263,3 +263,27 @@ impl MultiCollector {
         all
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::stale_status;
+    use crate::model::SessionStatus;
+
+    #[test]
+    fn stale_status_descendant_wins_over_cpu() {
+        // If a descendant is burning CPU, the session is executing a tool -
+        // even when the claude process itself looks idle.
+        assert_eq!(stale_status(true, false), SessionStatus::Executing);
+        assert_eq!(stale_status(true, true), SessionStatus::Executing);
+    }
+
+    #[test]
+    fn stale_status_cpu_only_is_thinking() {
+        assert_eq!(stale_status(false, true), SessionStatus::Thinking);
+    }
+
+    #[test]
+    fn stale_status_no_signal_is_waiting() {
+        assert_eq!(stale_status(false, false), SessionStatus::Waiting);
+    }
+}
