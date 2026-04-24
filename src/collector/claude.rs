@@ -449,6 +449,7 @@ impl ClaudeCollector {
         let current_task = cached.current_task.clone();
         let version = cached.version.clone();
         let git_branch = cached.git_branch.clone();
+        let last_activity = cached.last_activity;
         let token_history = cached.token_history.clone();
         let context_history = cached.context_history.clone();
         let compaction_count = cached.compaction_count;
@@ -461,16 +462,36 @@ impl ClaudeCollector {
             return None;
         }
 
-        // CPU-driven status: transcript freshness alone is unreliable
-        // (a session that just finished a turn looks "active" by mtime
-        // but the agent is idle waiting for the next prompt). The only
-        // honest "agent is doing something right now" signals are real
-        // CPU usage on the claude process or its descendant tree.
+        // Status is best-effort. The two signals we trust:
+        //   1. Active descendant CPU → tool is running.
+        //   2. Transcript mtime advanced recently AND the trailing line
+        //      is a user message → the model is actually generating.
+        //
+        // Notes on what we *don't* trust:
+        //   - `ps -o %cpu` is a cumulative lifetime average, so a long
+        //     session that worked earlier still reads >1% when idle.
+        //   - mtime alone fires on just-finished assistant turns too
+        //     (file was just touched, but the agent is now waiting on
+        //     the next user prompt). Pairing mtime with last_user_ts_ms
+        //     drops that false positive.
         let status = {
-            let cpu_active = proc.is_some_and(|p| p.cpu_pct > 1.0);
             let has_active_descendant =
                 process::has_active_descendant(sf.pid, children_map, process_info, 5.0);
-            super::stale_status(has_active_descendant, cpu_active)
+            let since_activity = std::time::SystemTime::now()
+                .duration_since(last_activity)
+                .unwrap_or_default();
+            // 5s window ≈ ~2-3 polling ticks. Long enough to bridge
+            // brief flush gaps during a streamed reply, short enough
+            // that an idle session settles into Waiting after one tick.
+            let transcript_active = since_activity.as_secs() < 5;
+            let model_generating = cached.last_user_ts_ms > 0;
+            if has_active_descendant {
+                SessionStatus::Executing
+            } else if transcript_active && model_generating {
+                SessionStatus::Thinking
+            } else {
+                SessionStatus::Waiting
+            }
         };
 
         let context_window = context_window_for_model(&model, max_context_tokens);
@@ -2639,13 +2660,14 @@ n/Users/bob/.claude-alt/projects/-Users-bob-project/session.jsonl
     }
 
     #[test]
-    fn test_load_session_idle_claude_is_waiting_regardless_of_transcript_tail() {
-        // Regression: the status logic used to misfire Thinking based on
-        // transcript signals alone — a just-finished session (end_turn
-        // text reply, recent mtime) rendered as Thinking even though the
-        // agent was idle waiting for the next prompt. Fix: status is now
-        // CPU-driven, so an idle claude process resolves to Waiting no
-        // matter what the transcript tail looks like.
+    fn test_load_session_stale_transcript_is_waiting_even_when_cpu_busy() {
+        // Regression: lifetime `%cpu` from ps doesn't tell us whether the
+        // agent is doing work *right now* — long-running sessions can
+        // average over 1% even when fully idle. Status must drive off
+        // recent transcript activity, not lifetime CPU. Here the
+        // transcript timestamps are months stale and there is no active
+        // descendant; even with cpu_pct=42 the session must read as
+        // Waiting.
         let temp = tempfile::tempdir().unwrap();
         let profile = temp.path().join(".claude");
         let sessions_dir = profile.join("sessions");
@@ -2656,16 +2678,21 @@ n/Users/bob/.claude-alt/projects/-Users-bob-project/session.jsonl
         std::fs::create_dir_all(&cwd).unwrap();
 
         let pid = 9101;
-        let sid = "idle-after-text";
+        let sid = "stale";
         let session_path = sessions_dir.join(format!("{}.json", pid));
         write_session_file(&session_path, pid, sid, &cwd);
-        // write_transcript ends on an assistant text turn (end_turn).
-        let transcript = write_transcript(&projects, &cwd, sid, "hello");
-        set_mtime(&transcript, 0);
+        // write_transcript hardcodes timestamps in 2026-03 → stale by
+        // the time the test runs. last_activity reflects the
+        // timestamp, not the file mtime, so this is the right way to
+        // simulate "no recent activity".
+        let _ = write_transcript(&projects, &cwd, sid, "hello");
 
         let config = ConfigDir::new(profile.clone());
-        // make_proc_info defaults cpu_pct = 0.0 → idle claude.
-        let process_info = make_proc_info(pid, "claude");
+        let mut process_info = make_proc_info(pid, "claude");
+        // Lifetime CPU > 1 — would have flipped the previous version
+        // to Thinking even though nothing is happening.
+        process_info.get_mut(&pid).unwrap().cpu_pct = 42.0;
+
         let mut collector = ClaudeCollector::new();
         collector.config_dirs = vec![config.clone()];
 
@@ -2683,15 +2710,15 @@ n/Users/bob/.claude-alt/projects/-Users-bob-project/session.jsonl
         assert_eq!(
             sessions[0].status,
             SessionStatus::Waiting,
-            "idle claude (cpu_pct = 0) must be Waiting regardless of transcript tail",
+            "stale transcript + idle descendants must be Waiting regardless of lifetime cpu_pct",
         );
     }
 
     #[test]
-    fn test_load_session_active_claude_cpu_is_thinking() {
-        // Counterpart: when the claude process itself is burning CPU the
-        // model is actually generating something. Status must surface
-        // Thinking rather than Waiting.
+    fn test_load_session_recent_transcript_activity_is_thinking() {
+        // Counterpart: when the transcript has just been written
+        // (timestamp within the last few seconds), the agent is actually
+        // emitting something — Thinking is the correct status.
         let temp = tempfile::tempdir().unwrap();
         let profile = temp.path().join(".claude");
         let sessions_dir = profile.join("sessions");
@@ -2702,16 +2729,30 @@ n/Users/bob/.claude-alt/projects/-Users-bob-project/session.jsonl
         std::fs::create_dir_all(&cwd).unwrap();
 
         let pid = 9102;
-        let sid = "active-thinking";
+        let sid = "fresh";
         let session_path = sessions_dir.join(format!("{}.json", pid));
         write_session_file(&session_path, pid, sid, &cwd);
-        let transcript = write_transcript(&projects, &cwd, sid, "go");
-        set_mtime(&transcript, 0);
+
+        // Hand-build a transcript with a "now"-ish timestamp so
+        // last_activity lands inside the 5s active window.
+        let now_iso = chrono::Utc::now().to_rfc3339();
+        let transcript_dir = projects.join(encode_cwd_path(cwd.to_str().unwrap()));
+        std::fs::create_dir_all(&transcript_dir).unwrap();
+        let transcript = transcript_dir.join(format!("{}.jsonl", sid));
+        std::fs::write(
+            &transcript,
+            format!(
+                r#"{{"type":"user","timestamp":"{}","message":{{"role":"user","content":"go"}}}}
+"#,
+                now_iso
+            ),
+        )
+        .unwrap();
 
         let config = ConfigDir::new(profile.clone());
-        let mut process_info = make_proc_info(pid, "claude");
-        process_info.get_mut(&pid).unwrap().cpu_pct = 42.0;
-
+        // cpu_pct intentionally 0 — status must come from transcript
+        // freshness alone, not CPU.
+        let process_info = make_proc_info(pid, "claude");
         let mut collector = ClaudeCollector::new();
         collector.config_dirs = vec![config.clone()];
 
