@@ -722,11 +722,50 @@ fn tool_color(name: &str, theme: &Theme) -> Color {
         "Edit"    => theme.proc_misc,     // green/active color
         "Write"   => theme.cpu_box,       // box/border accent
         "Bash"    => theme.hi_fg,         // highlight foreground
+        "shell" | "exec_command" | "write_stdin" => theme.hi_fg,
+        "apply_patch" => theme.proc_misc,
+        "update_plan" => theme.title,
+        "spawn_agent" | "send_input" | "wait_agent" => theme.title,
+        "view_image" => theme.session_id,
         "Grep"    => theme.status_fg,     // status accent
         "Glob"    => theme.graph_text,    // subtle text
+        "find" | "list_mcp_resources" | "read_mcp_resource" => theme.status_fg,
         "Agent"   => theme.title,         // title/emphasis
         "Skill"   => theme.selected_fg,   // selected foreground
         _         => theme.inactive_fg,   // fallback
+    }
+}
+
+fn tool_label(name: &str) -> &str {
+    match name {
+        "exec_command" | "shell" => "Exec",
+        "write_stdin" => "Input",
+        "apply_patch" => "Patch",
+        "update_plan" => "Plan",
+        "spawn_agent" => "Agent",
+        "send_input" => "Send",
+        "wait_agent" => "Wait",
+        "view_image" => "Image",
+        "list_mcp_resources" | "read_mcp_resource" => "MCP",
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_exec_command_uses_bash_color() {
+        let theme = Theme::default();
+        assert_eq!(tool_color("exec_command", &theme), tool_color("Bash", &theme));
+    }
+
+    #[test]
+    fn codex_tool_labels_fit_timeline_name_column() {
+        assert_eq!(tool_label("exec_command"), "Exec");
+        assert_eq!(tool_label("update_plan"), "Plan");
+        assert!(tool_label("exec_command").len() <= 6);
     }
 }
 
@@ -879,8 +918,9 @@ fn draw_timeline(
             theme.graph_text
         };
 
+        let name_label = super::truncate_str(tool_label(&tc.name), 6);
         lines.push(Line::from(vec![
-            Span::styled(format!("{}{:<6}", name_prefix, tc.name), name_style),
+            Span::styled(format!("{}{:<6}", name_prefix, name_label), name_style),
             Span::styled(
                 format!(" {:<20}", super::truncate_str(&tc.arg, 20)),
                 Style::default().fg(theme.graph_text),
