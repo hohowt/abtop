@@ -1,5 +1,5 @@
 use super::process::{self, ProcInfo};
-use crate::model::{AgentSession, ChildProcess, RateLimitInfo, SessionStatus};
+use crate::model::{AgentSession, ChildProcess, RateLimitInfo, SessionStatus, ToolCall};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -66,7 +66,9 @@ impl CodexCollector {
             ) {
                 seen_jsonl.insert(jsonl_path.clone());
                 if let Some(new_rl) = rl {
-                    let newer = self.last_rate_limit.as_ref()
+                    let newer = self
+                        .last_rate_limit
+                        .as_ref()
                         .is_none_or(|old| new_rl.updated_at > old.updated_at);
                     if newer {
                         super::rate_limit::write_codex_cache(&new_rl);
@@ -113,12 +115,14 @@ impl CodexCollector {
                         &shared.ports,
                     ) {
                         if let Some(new_rl) = rl {
-                            let newer = self.last_rate_limit.as_ref()
+                            let newer = self
+                                .last_rate_limit
+                                .as_ref()
                                 .is_none_or(|old| new_rl.updated_at > old.updated_at);
                             if newer {
-                        super::rate_limit::write_codex_cache(&new_rl);
-                        self.last_rate_limit = Some(new_rl);
-                    }
+                                super::rate_limit::write_codex_cache(&new_rl);
+                                self.last_rate_limit = Some(new_rl);
+                            }
                         }
                         sessions.push(session);
                     }
@@ -137,7 +141,11 @@ impl CodexCollector {
             .join(now.format("%Y").to_string())
             .join(now.format("%m").to_string())
             .join(now.format("%d").to_string());
-        if dir.exists() { Some(dir) } else { None }
+        if dir.exists() {
+            Some(dir)
+        } else {
+            None
+        }
     }
 
     fn load_session_with_rate_limit(
@@ -155,12 +163,7 @@ impl CodexCollector {
         let mem_mb = proc.map(|p| p.rss_kb / 1024).unwrap_or(0);
         let display_pid = pid.unwrap_or(0);
 
-        let project_name = result
-            .cwd
-            .rsplit('/')
-            .next()
-            .unwrap_or("?")
-            .to_string();
+        let project_name = result.cwd.rsplit('/').next().unwrap_or("?").to_string();
 
         // Status detection
         // Note: Codex interactive sessions emit task_complete after every turn,
@@ -176,7 +179,7 @@ impl CodexCollector {
             let has_active_child = pid.is_some_and(|p| {
                 process::has_active_descendant(p, children_map, process_info, 5.0)
             });
-            if has_active_child {
+            if has_active_child || result.pending_since_ms > 0 {
                 SessionStatus::Executing
             } else if result.model_generating {
                 SessionStatus::Thinking
@@ -209,10 +212,7 @@ impl CodexCollector {
         // so we catch grandchild processes that listen on ports.
         let mut children = Vec::new();
         if let Some(p) = pid {
-            let mut stack: Vec<u32> = children_map
-                .get(&p)
-                .cloned()
-                .unwrap_or_default();
+            let mut stack: Vec<u32> = children_map.get(&p).cloned().unwrap_or_default();
             let mut visited = std::collections::HashSet::new();
             while let Some(cpid) = stack.pop() {
                 if !visited.insert(cpid) {
@@ -237,43 +237,46 @@ impl CodexCollector {
         let (git_added, git_modified) = (0, 0);
         let rate_limit = result.rate_limit.clone();
 
-        Some((AgentSession {
-            agent_cli: "codex",
-            pid: display_pid,
-            session_id: result.session_id,
-            cwd: result.cwd,
-            project_name,
-            started_at: result.started_at,
-            status,
-            model: result.model,
-            effort: result.effort,
-            context_percent,
-            total_input_tokens: result.total_input,
-            total_output_tokens: result.total_output,
-            total_cache_read: result.total_cache_read,
-            total_cache_create: 0, // Codex doesn't report cache write
-            turn_count: result.turn_count,
-            current_tasks,
-            mem_mb,
-            version: result.version,
-            git_branch: result.git_branch,
-            git_added,
-            git_modified,
-            token_history: result.token_history,
-            context_history: vec![],
-            compaction_count: 0,
-            context_window: result.context_window,
-            subagents: vec![],
-            mem_file_count: 0,
-            mem_line_count: 0,
-            children,
-            initial_prompt: result.initial_prompt,
-            first_assistant_text: String::new(),
-            tool_calls: vec![],
-            pending_since_ms: 0,
-            thinking_since_ms: 0,
-            file_accesses: vec![],
-        }, rate_limit))
+        Some((
+            AgentSession {
+                agent_cli: "codex",
+                pid: display_pid,
+                session_id: result.session_id,
+                cwd: result.cwd,
+                project_name,
+                started_at: result.started_at,
+                status,
+                model: result.model,
+                effort: result.effort,
+                context_percent,
+                total_input_tokens: result.total_input,
+                total_output_tokens: result.total_output,
+                total_cache_read: result.total_cache_read,
+                total_cache_create: 0, // Codex doesn't report cache write
+                turn_count: result.turn_count,
+                current_tasks,
+                mem_mb,
+                version: result.version,
+                git_branch: result.git_branch,
+                git_added,
+                git_modified,
+                token_history: result.token_history,
+                context_history: vec![],
+                compaction_count: 0,
+                context_window: result.context_window,
+                subagents: vec![],
+                mem_file_count: 0,
+                mem_line_count: 0,
+                children,
+                initial_prompt: result.initial_prompt,
+                first_assistant_text: String::new(),
+                tool_calls: result.tool_calls,
+                pending_since_ms: result.pending_since_ms,
+                thinking_since_ms: result.thinking_since_ms,
+                file_accesses: vec![],
+            },
+            rate_limit,
+        ))
     }
 
     /// Find PIDs of running codex processes from shared process data (no extra ps call).
@@ -284,10 +287,7 @@ impl CodexCollector {
             let cmd = &info.command;
             let is_exec = cmd.contains(" exec");
             let is_codex = process::cmd_has_binary(cmd, "codex");
-            if is_codex
-                && !cmd.contains("app-server")
-                && !cmd.contains("grep")
-            {
+            if is_codex && !cmd.contains("app-server") && !cmd.contains("grep") {
                 pids.push((*pid, is_exec));
             }
         }
@@ -308,7 +308,8 @@ impl CodexCollector {
         {
             for &pid in pids {
                 for target in process::scan_proc_fds(pid) {
-                    let is_rollout = target.file_name()
+                    let is_rollout = target
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(".jsonl"));
                     if is_rollout {
@@ -329,10 +330,7 @@ impl CodexCollector {
                 args.push(pa);
             }
 
-            let output = Command::new("lsof")
-                .args(&args)
-                .output()
-                .ok();
+            let output = Command::new("lsof").args(&args).output().ok();
 
             if let Some(output) = output {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -352,7 +350,6 @@ impl CodexCollector {
             map
         }
     }
-
 }
 
 impl super::AgentCollector for CodexCollector {
@@ -361,7 +358,9 @@ impl super::AgentCollector for CodexCollector {
     }
 
     fn live_rate_limit(&self) -> Option<RateLimitInfo> {
-        self.last_rate_limit.clone().or_else(super::rate_limit::read_codex_cache)
+        self.last_rate_limit
+            .clone()
+            .or_else(super::rate_limit::read_codex_cache)
     }
 }
 
@@ -394,6 +393,91 @@ struct CodexJSONLResult {
     token_history: Vec<u64>,
     /// Rate limit info from the latest token_count event.
     rate_limit: Option<RateLimitInfo>,
+    /// Timeline of tool calls extracted from response_item.function_call events.
+    tool_calls: Vec<ToolCall>,
+    /// Earliest start timestamp among currently open tool calls.
+    pending_since_ms: u64,
+    /// Timestamp of the latest user prompt not yet followed by assistant output.
+    thinking_since_ms: u64,
+}
+
+fn event_timestamp_ms(val: &Value) -> Option<u64> {
+    val["timestamp"]
+        .as_str()
+        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+        .and_then(|dt| u64::try_from(dt.timestamp_millis()).ok())
+}
+
+fn value_to_tool_arg(value: &Value) -> Option<String> {
+    if let Some(s) = value.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(items) = value.as_array() {
+        let parts: Vec<&str> = items.iter().filter_map(|item| item.as_str()).collect();
+        if parts.is_empty() {
+            return None;
+        }
+        if parts.len() >= 3 && parts[0] == "bash" && parts[1] == "-lc" {
+            return Some(parts[2].to_string());
+        }
+        return Some(parts.join(" "));
+    }
+    if value.is_number() || value.is_boolean() {
+        return Some(value.to_string());
+    }
+    None
+}
+
+fn sanitize_tool_arg(arg: &str) -> String {
+    let redacted = super::redact_secrets(arg);
+    redacted.chars().take(120).collect()
+}
+
+fn parse_codex_tool_arg(arguments: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(arguments) else {
+        return String::new();
+    };
+
+    for key in ["file_path", "path"] {
+        if let Some(raw) = value[key].as_str() {
+            let short = raw.rsplit('/').next().unwrap_or(raw);
+            return sanitize_tool_arg(short);
+        }
+    }
+
+    for key in ["cmd", "command", "chars", "target", "session_id"] {
+        if let Some(raw) = value_to_tool_arg(&value[key]) {
+            return sanitize_tool_arg(&raw);
+        }
+    }
+
+    if let Some(obj) = value.as_object() {
+        for val in obj.values() {
+            if let Some(raw) = value_to_tool_arg(val) {
+                return sanitize_tool_arg(&raw);
+            }
+        }
+    }
+
+    String::new()
+}
+
+fn close_codex_tool_call(
+    call_id: &str,
+    end_ms: u64,
+    tool_calls: &mut [ToolCall],
+    call_indices: &HashMap<String, usize>,
+    call_starts: &mut HashMap<String, u64>,
+    pending_tasks: &mut Vec<(String, String)>,
+) {
+    if let Some(start_ms) = call_starts.remove(call_id) {
+        if let Some(idx) = call_indices.get(call_id).copied() {
+            if let Some(tool_call) = tool_calls.get_mut(idx) {
+                tool_call.duration_ms = end_ms.saturating_sub(start_ms);
+            }
+        }
+    }
+    pending_tasks.retain(|(id, _)| id != call_id);
 }
 
 /// Parse a Codex rollout-*.jsonl file.
@@ -432,7 +516,13 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
         last_context_tokens: 0,
         token_history: Vec::new(),
         rate_limit: None,
+        tool_calls: Vec::new(),
+        pending_since_ms: 0,
+        thinking_since_ms: 0,
     };
+    let mut call_indices: HashMap<String, usize> = HashMap::new();
+    let mut call_starts: HashMap<String, u64> = HashMap::new();
+    let mut pending_tasks: Vec<(String, String)> = Vec::new();
 
     // Match Claude transcript cap: a malformed/hostile line beyond this size
     // aborts the scan to prevent OOM. take(MAX+1) physically bounds the read.
@@ -508,6 +598,7 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                     }
                     Some("user_message") => {
                         result.model_generating = true;
+                        result.thinking_since_ms = event_timestamp_ms(&val).unwrap_or(0);
                         if result.initial_prompt.is_empty() {
                             if let Some(msg) = payload["message"].as_str() {
                                 let truncated: String = msg.chars().take(120).collect();
@@ -522,7 +613,8 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         if total.is_object() {
                             let inp = total["input_tokens"].as_u64().unwrap_or(0);
                             let out = total["output_tokens"].as_u64().unwrap_or(0);
-                            let cache = total["cached_input_tokens"].as_u64()
+                            let cache = total["cached_input_tokens"]
+                                .as_u64()
                                 .or_else(|| total["cache_read_input_tokens"].as_u64())
                                 .unwrap_or(0);
                             result.total_input = inp;
@@ -534,7 +626,8 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         if last.is_object() {
                             let inp = last["input_tokens"].as_u64().unwrap_or(0);
                             let out = last["output_tokens"].as_u64().unwrap_or(0);
-                            let cache = last["cached_input_tokens"].as_u64()
+                            let cache = last["cached_input_tokens"]
+                                .as_u64()
                                 .or_else(|| last["cache_read_input_tokens"].as_u64())
                                 .unwrap_or(0);
                             result.last_context_tokens = inp + cache;
@@ -551,7 +644,8 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         // Free plans: primary=7d(10080min), secondary=null.
                         let rl = &payload["rate_limits"];
                         if rl.is_object() {
-                            let event_secs = val["timestamp"].as_str()
+                            let event_secs = val["timestamp"]
+                                .as_str()
                                 .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
                                 .map(|dt| dt.timestamp() as u64);
                             let mut info = RateLimitInfo {
@@ -561,7 +655,9 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                             };
                             for slot in &["primary", "secondary"] {
                                 let w = &rl[slot];
-                                if !w.is_object() { continue; }
+                                if !w.is_object() {
+                                    continue;
+                                }
                                 let mins = w["window_minutes"].as_u64().unwrap_or(0);
                                 let pct = w["used_percent"].as_f64();
                                 let resets = w["resets_at"].as_u64();
@@ -579,10 +675,25 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                     Some("agent_message") => {
                         result.turn_count += 1;
                         result.model_generating = false;
+                        result.thinking_since_ms = 0;
                     }
                     Some("task_complete") => {
                         result.task_complete = true;
                         result.model_generating = false;
+                        result.thinking_since_ms = 0;
+                    }
+                    Some(event_type) if event_type.ends_with("_end") => {
+                        if let Some(call_id) = payload["call_id"].as_str() {
+                            let end_ms = event_timestamp_ms(&val).unwrap_or(0);
+                            close_codex_tool_call(
+                                call_id,
+                                end_ms,
+                                &mut result.tool_calls,
+                                &call_indices,
+                                &mut call_starts,
+                                &mut pending_tasks,
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -596,22 +707,50 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                         // Extract first arg (typically file path or command)
                         let arg = payload["arguments"]
                             .as_str()
-                            .and_then(|s| serde_json::from_str::<Value>(s).ok())
-                            .and_then(|v| {
-                                v["file_path"]
-                                    .as_str()
-                                    .or_else(|| v["cmd"].as_str())
-                                    .map(|s| s.to_string())
-                            })
+                            .map(parse_codex_tool_arg)
                             .unwrap_or_default();
 
-                        if arg.is_empty() {
-                            result.current_task = name.to_string();
+                        let task = if arg.is_empty() {
+                            name.to_string()
                         } else {
-                            // Shorten path: just filename, then redact any secrets
-                            let short = arg.rsplit('/').next().unwrap_or(&arg);
-                            let redacted = super::redact_secrets(short);
-                            result.current_task = format!("{} {}", name, redacted);
+                            format!("{} {}", name, arg)
+                        };
+
+                        result.model_generating = false;
+                        result.thinking_since_ms = 0;
+
+                        if let Some(call_id) = payload["call_id"].as_str() {
+                            let start_ms = event_timestamp_ms(&val).unwrap_or(0);
+                            call_starts.insert(call_id.to_string(), start_ms);
+                            pending_tasks.retain(|(id, _)| id != call_id);
+                            pending_tasks.push((call_id.to_string(), task));
+                            if result.tool_calls.len() < 500 {
+                                let idx = result.tool_calls.len();
+                                result.tool_calls.push(ToolCall {
+                                    name: name.to_string(),
+                                    arg,
+                                    duration_ms: 0,
+                                });
+                                call_indices.insert(call_id.to_string(), idx);
+                            }
+                        }
+                    }
+                } else if payload["type"].as_str() == Some("function_call_output") {
+                    if let Some(call_id) = payload["call_id"].as_str() {
+                        let keep_open_for_exec = call_indices
+                            .get(call_id)
+                            .and_then(|idx| result.tool_calls.get(*idx))
+                            .is_some_and(|tc| tc.name == "exec_command");
+                        if !keep_open_for_exec {
+                            let end_ms = event_timestamp_ms(&val).unwrap_or(0);
+                            close_codex_tool_call(
+                                call_id,
+                                end_ms,
+                                &mut result.tool_calls,
+                                &call_indices,
+                                &mut call_starts,
+                                &mut pending_tasks,
+                            );
                         }
                     }
                 }
@@ -637,6 +776,15 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
 
     if result.session_id.is_empty() {
         return None;
+    }
+
+    result.current_task = pending_tasks
+        .last()
+        .map(|(_, task)| task.clone())
+        .unwrap_or_default();
+    result.pending_since_ms = call_starts.values().copied().min().unwrap_or(0);
+    if !result.model_generating {
+        result.thinking_since_ms = 0;
     }
 
     Some(result)
@@ -670,10 +818,13 @@ mod tests {
     #[test]
     fn test_parse_codex_token_count() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":200,"cached_input_tokens":100},"last_token_usage":{"input_tokens":50,"output_tokens":20,"cached_input_tokens":10},"model_context_window":128000}}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"output_tokens":200,"cached_input_tokens":100},"last_token_usage":{"input_tokens":50,"output_tokens":20,"cached_input_tokens":10},"model_context_window":128000}}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         assert_eq!(result.total_input, 500);
         assert_eq!(result.total_output, 200);
@@ -687,10 +838,13 @@ mod tests {
     #[test]
     fn test_parse_codex_rate_limits() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"output_tokens":1},"last_token_usage":{"input_tokens":1,"output_tokens":1}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":9.0,"window_minutes":300,"resets_at":1774686045},"secondary":{"used_percent":14.0,"window_minutes":10080,"resets_at":1775186466},"plan_type":"plus"}}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"output_tokens":1},"last_token_usage":{"input_tokens":1,"output_tokens":1}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":9.0,"window_minutes":300,"resets_at":1774686045},"secondary":{"used_percent":14.0,"window_minutes":10080,"resets_at":1775186466},"plan_type":"plus"}}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         let rl = result.rate_limit.expect("rate_limit should be Some");
         assert_eq!(rl.five_hour_pct, Some(9.0));
@@ -700,11 +854,14 @@ mod tests {
     #[test]
     fn test_parse_codex_cache_read_fallback_field_name() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            // Uses cache_read_input_tokens instead of cached_input_tokens
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30},"last_token_usage":{"input_tokens":20,"output_tokens":10,"cache_read_input_tokens":5},"model_context_window":200000}}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                // Uses cache_read_input_tokens instead of cached_input_tokens
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":30},"last_token_usage":{"input_tokens":20,"output_tokens":10,"cache_read_input_tokens":5},"model_context_window":200000}}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         assert_eq!(result.total_cache_read, 30);
         assert_eq!(result.last_context_tokens, 25); // 20 + 5
@@ -713,11 +870,14 @@ mod tests {
     #[test]
     fn test_parse_codex_skips_malformed_lines() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"NOT VALID JSON AT ALL"#,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"agent_message"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"NOT VALID JSON AT ALL"#,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"agent_message"}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         // Bad line skipped, agent_message still counted
         assert_eq!(result.turn_count, 1);
@@ -729,13 +889,19 @@ mod tests {
         // Combined with recent rollout mtime this drives the Thinking
         // status branch in CodexCollector::collect_sessions.
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"agent_message","message":"hi"}}"#,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:02:00Z","payload":{"type":"user_message","message":"do a thing"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"agent_message","message":"hi"}}"#,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:02:00Z","payload":{"type":"user_message","message":"do a thing"}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
-        assert!(result.model_generating, "trailing user_message must mark model as generating");
+        assert!(
+            result.model_generating,
+            "trailing user_message must mark model as generating"
+        );
     }
 
     #[test]
@@ -744,24 +910,33 @@ mod tests {
         // session is idle. Without the reset Thinking would misfire on
         // every just-finished turn while mtime is still fresh.
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"user_message","message":"do a thing"}}"#,
-            r#"{"type":"event_msg","timestamp":"2026-03-28T15:02:00Z","payload":{"type":"agent_message","message":"done"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"user_message","message":"do a thing"}}"#,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:02:00Z","payload":{"type":"agent_message","message":"done"}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
-        assert!(!result.model_generating, "agent_message must close the thinking window");
+        assert!(
+            !result.model_generating,
+            "agent_message must close the thinking window"
+        );
     }
 
     #[test]
     fn test_parse_codex_turn_context_effort() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            r#"{"type":"turn_context","timestamp":"2026-03-28T15:01:00Z","payload":{"cwd":"/home/user/project","model":"gpt-5-codex","effort":"low","summary":"auto"}}"#,
-            // Later turn_context overrides — /effort can change mid-session
-            r#"{"type":"turn_context","timestamp":"2026-03-28T15:02:00Z","payload":{"cwd":"/home/user/project","model":"gpt-5-codex","effort":"high","summary":"auto"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"turn_context","timestamp":"2026-03-28T15:01:00Z","payload":{"cwd":"/home/user/project","model":"gpt-5-codex","effort":"low","summary":"auto"}}"#,
+                // Later turn_context overrides — /effort can change mid-session
+                r#"{"type":"turn_context","timestamp":"2026-03-28T15:02:00Z","payload":{"cwd":"/home/user/project","model":"gpt-5-codex","effort":"high","summary":"auto"}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         assert_eq!(result.model, "gpt-5-codex");
         assert_eq!(result.effort, "high");
@@ -770,13 +945,109 @@ mod tests {
     #[test]
     fn test_parse_codex_missing_effort_is_empty() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
-        write_lines(&mut file, &[
-            SESSION_META,
-            // turn_context without effort field
-            r#"{"type":"turn_context","timestamp":"2026-03-28T15:01:00Z","payload":{"cwd":"/home/user/project","model":"gpt-5-codex"}}"#,
-        ]);
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                // turn_context without effort field
+                r#"{"type":"turn_context","timestamp":"2026-03-28T15:01:00Z","payload":{"cwd":"/home/user/project","model":"gpt-5-codex"}}"#,
+            ],
+        );
         let result = parse_codex_jsonl(file.path()).unwrap();
         assert_eq!(result.effort, "");
+    }
+
+    #[test]
+    fn test_codex_pending_function_call_marks_session_executing_and_timeline() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:00Z","payload":{"type":"user_message","message":"run tests"}}"#,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:05Z","payload":{"type":"agent_message","message":"I'll run them."}}"#,
+                r#"{"type":"response_item","timestamp":"2026-03-28T15:01:06Z","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cargo test\"}","call_id":"call_1"}}"#,
+            ],
+        );
+
+        let collector = CodexCollector::new();
+        let mut process_info = HashMap::new();
+        process_info.insert(
+            42,
+            ProcInfo {
+                pid: 42,
+                ppid: 1,
+                rss_kb: 1024,
+                cpu_pct: 0.0,
+                command: "codex".to_string(),
+            },
+        );
+
+        let (session, _) = collector
+            .load_session_with_rate_limit(
+                Some(42),
+                false,
+                file.path(),
+                &process_info,
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .unwrap();
+
+        assert_eq!(session.status, SessionStatus::Executing);
+        assert_eq!(
+            session.current_tasks,
+            vec!["exec_command cargo test".to_string()]
+        );
+        assert_eq!(session.tool_calls.len(), 1);
+        assert_eq!(session.tool_calls[0].name, "exec_command");
+        assert_eq!(session.tool_calls[0].arg, "cargo test");
+        assert_eq!(session.tool_calls[0].duration_ms, 0);
+        assert!(session.pending_since_ms > 0);
+        assert_eq!(session.thinking_since_ms, 0);
+    }
+
+    #[test]
+    fn test_codex_exec_command_end_closes_task_and_records_duration() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        write_lines(
+            &mut file,
+            &[
+                SESSION_META,
+                r#"{"type":"response_item","timestamp":"2026-03-28T15:01:06Z","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cargo test\"}","call_id":"call_1"}}"#,
+                r#"{"type":"event_msg","timestamp":"2026-03-28T15:01:09Z","payload":{"type":"exec_command_end","call_id":"call_1"}}"#,
+            ],
+        );
+
+        let collector = CodexCollector::new();
+        let mut process_info = HashMap::new();
+        process_info.insert(
+            42,
+            ProcInfo {
+                pid: 42,
+                ppid: 1,
+                rss_kb: 1024,
+                cpu_pct: 0.0,
+                command: "codex".to_string(),
+            },
+        );
+
+        let (session, _) = collector
+            .load_session_with_rate_limit(
+                Some(42),
+                false,
+                file.path(),
+                &process_info,
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .unwrap();
+
+        assert_eq!(session.status, SessionStatus::Waiting);
+        assert_eq!(session.current_tasks, vec!["waiting for input".to_string()]);
+        assert_eq!(session.tool_calls.len(), 1);
+        assert_eq!(session.tool_calls[0].duration_ms, 3_000);
+        assert_eq!(session.pending_since_ms, 0);
     }
 
     #[test]
