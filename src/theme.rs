@@ -54,6 +54,8 @@ pub const THEME_NAMES: &[&str] = &[
     "tokyo-night",
     "gruvbox",
     "nord",
+    "light",
+    "white",
     "high-contrast",
     "protanopia",
     "deuteranopia",
@@ -69,6 +71,8 @@ impl Theme {
             "tokyo-night" => Some(Self::tokyo_night()),
             "gruvbox" => Some(Self::gruvbox()),
             "nord" => Some(Self::nord()),
+            "light" => Some(Self::light()),
+            "white" => Some(Self::white()),
             "high-contrast" => Some(Self::high_contrast()),
             "protanopia" => Some(Self::protanopia()),
             "deuteranopia" => Some(Self::deuteranopia()),
@@ -372,6 +376,108 @@ impl Theme {
                 start: (46, 52, 64),
                 mid: (136, 192, 208),
                 end: (180, 142, 173),
+            },
+        }
+    }
+
+    /// Light theme — Solarized Light palette. Cream background with
+    /// muted accents that retain enough chroma to read on a dark terminal.
+    pub fn light() -> Self {
+        Self {
+            name: "light",
+            main_bg: Color::Rgb(253, 246, 227),        // base3 #fdf6e3
+            main_fg: Color::Rgb(88, 110, 117),         // base01 #586e75
+            title: Color::Rgb(7, 54, 66),              // base02 #073642
+            hi_fg: Color::Rgb(203, 75, 22),            // orange #cb4b16
+            selected_bg: Color::Rgb(238, 232, 213),    // base2 #eee8d5
+            selected_fg: Color::Rgb(7, 54, 66),        // base02
+            inactive_fg: Color::Rgb(147, 161, 161),    // base1 #93a1a1
+            graph_text: Color::Rgb(131, 148, 150),     // base0 #839496
+            meter_bg: Color::Rgb(238, 232, 213),       // base2
+            proc_misc: Color::Rgb(133, 153, 0),        // green #859900
+            div_line: Color::Rgb(238, 232, 213),       // base2
+            session_id: Color::Rgb(181, 137, 0),       // yellow #b58900
+            status_fg: Color::Rgb(220, 50, 47),        // red #dc322f
+            warning_fg: Color::Rgb(203, 75, 22),       // orange
+            cpu_box: Color::Rgb(38, 139, 210),         // blue #268bd2
+            mem_box: Color::Rgb(108, 113, 196),        // violet #6c71c4
+            net_box: Color::Rgb(42, 161, 152),         // cyan #2aa198
+            proc_box: Color::Rgb(220, 50, 47),         // red
+            cpu_grad: Gradient {
+                start: (133, 153, 0),                  // green
+                mid: (181, 137, 0),                    // yellow
+                end: (220, 50, 47),                    // red
+            },
+            proc_grad: Gradient {
+                start: (42, 161, 152),                 // cyan
+                mid: (181, 137, 0),                    // yellow
+                end: (220, 50, 47),                    // red
+            },
+            used_grad: Gradient {
+                start: (238, 232, 213),                // base2
+                mid: (203, 75, 22),                    // orange
+                end: (220, 50, 47),                    // red
+            },
+            free_grad: Gradient {
+                start: (253, 246, 227),                // base3
+                mid: (133, 153, 0),                    // green
+                end: (42, 161, 152),                   // cyan
+            },
+            cached_grad: Gradient {
+                start: (253, 246, 227),                // base3
+                mid: (38, 139, 210),                   // blue
+                end: (108, 113, 196),                  // violet
+            },
+        }
+    }
+
+    /// White theme — GitHub Light palette. Pure white background with
+    /// crisp accent colors for users on bright terminals.
+    pub fn white() -> Self {
+        Self {
+            name: "white",
+            main_bg: Color::Rgb(255, 255, 255),        // white
+            main_fg: Color::Rgb(31, 35, 40),           // gh fg.default #1f2328
+            title: Color::Rgb(0, 0, 0),                // black
+            hi_fg: Color::Rgb(207, 34, 46),            // gh red #cf222e
+            selected_bg: Color::Rgb(221, 244, 255),    // gh accent.subtle #ddf4ff
+            selected_fg: Color::Rgb(9, 105, 218),      // gh blue #0969da
+            inactive_fg: Color::Rgb(140, 149, 159),    // gh fg.muted #8c959f
+            graph_text: Color::Rgb(101, 109, 118),     // gh fg.subtle #656d76
+            meter_bg: Color::Rgb(234, 238, 242),       // gh canvas.subtle #eaeef2
+            proc_misc: Color::Rgb(26, 127, 55),        // gh green #1a7f37
+            div_line: Color::Rgb(208, 215, 222),       // gh border.default #d0d7de
+            session_id: Color::Rgb(154, 103, 0),       // gh yellow.fg #9a6700
+            status_fg: Color::Rgb(207, 34, 46),        // gh red
+            warning_fg: Color::Rgb(191, 135, 0),       // gh attention.fg #bf8700
+            cpu_box: Color::Rgb(9, 105, 218),          // gh blue
+            mem_box: Color::Rgb(130, 80, 223),         // gh purple #8250df
+            net_box: Color::Rgb(26, 127, 55),          // gh green
+            proc_box: Color::Rgb(207, 34, 46),         // gh red
+            cpu_grad: Gradient {
+                start: (26, 127, 55),                  // green
+                mid: (191, 135, 0),                    // amber
+                end: (207, 34, 46),                    // red
+            },
+            proc_grad: Gradient {
+                start: (9, 105, 218),                  // blue
+                mid: (191, 135, 0),                    // amber
+                end: (207, 34, 46),                    // red
+            },
+            used_grad: Gradient {
+                start: (234, 238, 242),                // canvas.subtle
+                mid: (191, 135, 0),                    // amber
+                end: (207, 34, 46),                    // red
+            },
+            free_grad: Gradient {
+                start: (255, 255, 255),                // white
+                mid: (26, 127, 55),                    // green
+                end: (9, 105, 218),                    // blue
+            },
+            cached_grad: Gradient {
+                start: (255, 255, 255),                // white
+                mid: (9, 105, 218),                    // blue
+                end: (130, 80, 223),                   // purple
             },
         }
     }

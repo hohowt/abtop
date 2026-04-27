@@ -85,7 +85,7 @@ tmux new -s work
 
 ## Themes
 
-10 built-in themes, including 4 colorblind-friendly options (`high-contrast`, `protanopia`, `deuteranopia`, `tritanopia`). Press `t` to cycle at runtime, or launch with `--theme <name>`. Your choice is saved to `~/.config/abtop/config.toml`.
+12 built-in themes, including `light` (Solarized cream) and `white` (GitHub-style pure white) for bright terminals plus 4 colorblind-friendly options (`high-contrast`, `protanopia`, `deuteranopia`, `tritanopia`). Press `t` to cycle at runtime, or launch with `--theme <name>`. Your choice is saved to `~/.config/abtop/config.toml`.
 
 | btop (default) | dracula | catppuccin |
 |:-:|:-:|:-:|
@@ -94,6 +94,10 @@ tmux new -s work
 | tokyo-night | gruvbox | nord |
 |:-:|:-:|:-:|
 | ![tokyo-night](https://raw.githubusercontent.com/graykode/abtop/main/assets/themes/tokyo-night.png) | ![gruvbox](https://raw.githubusercontent.com/graykode/abtop/main/assets/themes/gruvbox.png) | ![nord](https://raw.githubusercontent.com/graykode/abtop/main/assets/themes/nord.png) |
+
+| light | white |
+|:-:|:-:|
+| ![light](https://raw.githubusercontent.com/graykode/abtop/main/assets/themes/light.png) | ![white](https://raw.githubusercontent.com/graykode/abtop/main/assets/themes/white.png) |
 
 Colorblind-friendly themes:
 
