@@ -19,18 +19,26 @@ pub(crate) fn draw_config_overlay(f: &mut Frame, app: &App, theme: &Theme) {
 
     let block = Block::default()
         .style(Style::default().bg(theme.main_bg))
-        .title(Line::from(vec![
-            Span::styled(
+        .title(
+            Line::from(vec![Span::styled(
                 " Config ",
-                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
-            ),
-        ]).alignment(Alignment::Center))
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
+            )])
+            .alignment(Alignment::Center),
+        )
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.cpu_box));
     f.render_widget(block, popup);
 
-    let inner = Rect::new(popup.x + 2, popup.y + 1, popup.width.saturating_sub(4), popup.height.saturating_sub(2));
+    let inner = Rect::new(
+        popup.x + 2,
+        popup.y + 1,
+        popup.width.saturating_sub(4),
+        popup.height.saturating_sub(2),
+    );
 
     let items: Vec<(&str, String)> = vec![
         ("Theme", app.theme.name.to_string()),
@@ -49,7 +57,10 @@ pub(crate) fn draw_config_overlay(f: &mut Frame, app: &App, theme: &Theme) {
         let cursor = if selected { ">" } else { " " };
 
         let label_style = if selected {
-            Style::default().fg(theme.selected_fg).bg(theme.selected_bg).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(theme.selected_fg)
+                .bg(theme.selected_bg)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.main_fg)
         };
@@ -76,7 +87,10 @@ pub(crate) fn draw_config_overlay(f: &mut Frame, app: &App, theme: &Theme) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!(" abtop v{}  Enter/Space to change  Esc to close", env!("CARGO_PKG_VERSION")),
+        format!(
+            " abtop v{}  Enter/Space to change  Esc to close",
+            env!("CARGO_PKG_VERSION")
+        ),
         Style::default().fg(theme.graph_text),
     )));
 
@@ -84,5 +98,9 @@ pub(crate) fn draw_config_overlay(f: &mut Frame, app: &App, theme: &Theme) {
 }
 
 fn toggle_str(v: bool) -> String {
-    if v { "on".into() } else { "off".into() }
+    if v {
+        "on".into()
+    } else {
+        "off".into()
+    }
 }

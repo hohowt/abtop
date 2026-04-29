@@ -25,15 +25,51 @@ pub(crate) fn items(app: &App) -> Vec<ViewItem> {
     use ViewState::*;
     let bool_state = |b: bool| if b { On } else { Off };
     vec![
-        ViewItem { key: 'T', label: "tree view",       state: bool_state(app.tree_view) },
-        ViewItem { key: 'l', label: "timeline",        state: bool_state(app.show_timeline) },
-        ViewItem { key: 'f', label: "file audit",      state: bool_state(app.show_file_audit) },
-        ViewItem { key: '1', label: "context panel",   state: bool_state(app.show_context) },
-        ViewItem { key: '2', label: "quota panel",     state: bool_state(app.show_quota) },
-        ViewItem { key: '3', label: "tokens panel",    state: bool_state(app.show_tokens) },
-        ViewItem { key: '4', label: "ports panel",     state: bool_state(app.show_ports) },
-        ViewItem { key: '5', label: "sessions panel",  state: bool_state(app.show_sessions) },
-        ViewItem { key: 't', label: "cycle theme",     state: Action },
+        ViewItem {
+            key: 'T',
+            label: "tree view",
+            state: bool_state(app.tree_view),
+        },
+        ViewItem {
+            key: 'l',
+            label: "timeline",
+            state: bool_state(app.show_timeline),
+        },
+        ViewItem {
+            key: 'f',
+            label: "file audit",
+            state: bool_state(app.show_file_audit),
+        },
+        ViewItem {
+            key: '1',
+            label: "context panel",
+            state: bool_state(app.show_context),
+        },
+        ViewItem {
+            key: '2',
+            label: "quota panel",
+            state: bool_state(app.show_quota),
+        },
+        ViewItem {
+            key: '3',
+            label: "tokens panel",
+            state: bool_state(app.show_tokens),
+        },
+        ViewItem {
+            key: '4',
+            label: "ports panel",
+            state: bool_state(app.show_ports),
+        },
+        ViewItem {
+            key: '5',
+            label: "sessions panel",
+            state: bool_state(app.show_sessions),
+        },
+        ViewItem {
+            key: 't',
+            label: "cycle theme",
+            state: Action,
+        },
     ]
 }
 
@@ -53,7 +89,9 @@ pub(crate) fn draw_view_overlay(f: &mut Frame, app: &App, theme: &Theme) {
         .title(
             Line::from(vec![Span::styled(
                 " View ",
-                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
             )])
             .alignment(Alignment::Center),
         )
@@ -82,8 +120,16 @@ pub(crate) fn draw_view_overlay(f: &mut Frame, app: &App, theme: &Theme) {
             ViewState::Action => Style::default().fg(theme.session_id),
         };
         lines.push(Line::from(vec![
-            Span::styled(format!("  {}  ", item.key), Style::default().fg(theme.hi_fg).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("{:<22}", item.label), Style::default().fg(theme.main_fg)),
+            Span::styled(
+                format!("  {}  ", item.key),
+                Style::default()
+                    .fg(theme.hi_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<22}", item.label),
+                Style::default().fg(theme.main_fg),
+            ),
             Span::styled(state_str.to_string(), state_style),
         ]));
     }

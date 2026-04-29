@@ -33,9 +33,21 @@ pub(crate) fn draw_tokens_panel(f: &mut Frame, app: &App, area: Rect, theme: &Th
         (0.0, 0.0, 0.0, 0.0)
     };
 
-    let free_grad = make_gradient(theme.free_grad.start, theme.free_grad.mid, theme.free_grad.end);
-    let used_grad = make_gradient(theme.used_grad.start, theme.used_grad.mid, theme.used_grad.end);
-    let cached_grad = make_gradient(theme.cached_grad.start, theme.cached_grad.mid, theme.cached_grad.end);
+    let free_grad = make_gradient(
+        theme.free_grad.start,
+        theme.free_grad.mid,
+        theme.free_grad.end,
+    );
+    let used_grad = make_gradient(
+        theme.used_grad.start,
+        theme.used_grad.mid,
+        theme.used_grad.end,
+    );
+    let cached_grad = make_gradient(
+        theme.cached_grad.start,
+        theme.cached_grad.mid,
+        theme.cached_grad.end,
+    );
 
     let bar_w = (area.width as usize).saturating_sub(20).clamp(5, 15);
 
@@ -43,7 +55,9 @@ pub(crate) fn draw_tokens_panel(f: &mut Frame, app: &App, area: Rect, theme: &Th
         styled_label(" Total: ", theme.graph_text),
         Span::styled(
             fmt_tokens(total),
-            Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.title)
+                .add_modifier(Modifier::BOLD),
         ),
     ];
 
@@ -89,8 +103,16 @@ pub(crate) fn draw_tokens_panel(f: &mut Frame, app: &App, area: Rect, theme: &Th
         .map(|&v| v as f64 / max_val as f64)
         .collect();
     let mut spark_line_spans = vec![styled_label(" ", theme.graph_text)];
-    spark_line_spans.extend(braille_sparkline(&normalized, spark_w, &cpu_grad, theme.graph_text));
-    spark_line_spans.push(Span::styled(" tokens/turn", Style::default().fg(theme.graph_text)));
+    spark_line_spans.extend(braille_sparkline(
+        &normalized,
+        spark_w,
+        &cpu_grad,
+        theme.graph_text,
+    ));
+    spark_line_spans.push(Span::styled(
+        " tokens/turn",
+        Style::default().fg(theme.graph_text),
+    ));
 
     let lines = vec![
         Line::from(total_line),
@@ -111,7 +133,11 @@ pub(crate) fn draw_tokens_panel(f: &mut Frame, app: &App, area: Rect, theme: &Th
     ];
 
     let panel_title = if let Some(s) = selected {
-        format!("tokens ({}/{})", truncate_str(&s.project_name, 12), truncate_str(&s.session_id, 8))
+        format!(
+            "tokens ({}/{})",
+            truncate_str(&s.project_name, 12),
+            truncate_str(&s.session_id, 8)
+        )
     } else {
         "tokens".to_string()
     };

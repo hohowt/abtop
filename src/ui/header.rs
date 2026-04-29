@@ -28,11 +28,16 @@ pub(crate) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     let mut spans: Vec<Span> = Vec::with_capacity(8);
     spans.push(Span::styled(
         title.clone(),
-        Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.title)
+            .add_modifier(Modifier::BOLD),
     ));
 
     if let Some(h) = host_render {
-        spans.push(Span::styled(format!(" {h} "), Style::default().fg(theme.graph_text)));
+        spans.push(Span::styled(
+            format!(" {h} "),
+            Style::default().fg(theme.graph_text),
+        ));
     }
 
     if host_render.is_some() && agent_render.is_some() {
@@ -40,7 +45,10 @@ pub(crate) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     }
 
     if let Some(a) = agent_render {
-        spans.push(Span::styled(format!(" {a} "), Style::default().fg(theme.graph_text)));
+        spans.push(Span::styled(
+            format!(" {a} "),
+            Style::default().fg(theme.graph_text),
+        ));
     }
 
     // Right-align the timestamp+counters block.
@@ -53,8 +61,14 @@ pub(crate) fn draw_header(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         format!(" {now}  "),
         Style::default().fg(theme.graph_text),
     ));
-    spans.push(Span::styled(format!("{active}↑"), Style::default().fg(theme.proc_misc)));
-    spans.push(Span::styled(format!(" {session_count}●"), Style::default().fg(theme.main_fg)));
+    spans.push(Span::styled(
+        format!("{active}↑"),
+        Style::default().fg(theme.proc_misc),
+    ));
+    spans.push(Span::styled(
+        format!(" {session_count}●"),
+        Style::default().fg(theme.main_fg),
+    ));
     spans.push(Span::raw("  "));
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);

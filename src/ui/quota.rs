@@ -48,9 +48,17 @@ pub(crate) fn draw_quota_panel(f: &mut Frame, app: &App, area: Rect, theme: &The
         } else {
             col_w
         };
-        let col_area = Rect { x: col_x, y: inner.y, width: this_w, height: content_h };
+        let col_area = Rect {
+            x: col_x,
+            y: inner.y,
+            width: this_w,
+            height: content_h,
+        };
 
-        let rl = app.rate_limits.iter().find(|r| r.source.eq_ignore_ascii_case(source));
+        let rl = app
+            .rate_limits
+            .iter()
+            .find(|r| r.source.eq_ignore_ascii_case(source));
         draw_source_column(f, col_area, source, rl, &cpu_grad, theme);
     }
 
@@ -61,10 +69,19 @@ pub(crate) fn draw_quota_panel(f: &mut Frame, app: &App, area: Rect, theme: &The
         width: inner.width,
         height: 1,
     };
-    f.render_widget(Paragraph::new(vec![Line::from(vec![
-        Span::styled(format!(" {}", fmt_tokens(total_tokens)), Style::default().fg(theme.main_fg)),
-        Span::styled(format!(" {}/min", fmt_tokens(tokens_per_min as u64)), Style::default().fg(theme.graph_text)),
-    ])]), bottom_area);
+    f.render_widget(
+        Paragraph::new(vec![Line::from(vec![
+            Span::styled(
+                format!(" {}", fmt_tokens(total_tokens)),
+                Style::default().fg(theme.main_fg),
+            ),
+            Span::styled(
+                format!(" {}/min", fmt_tokens(tokens_per_min as u64)),
+                Style::default().fg(theme.graph_text),
+            ),
+        ])]),
+        bottom_area,
+    );
 }
 
 fn draw_source_column(
@@ -87,9 +104,14 @@ fn draw_source_column(
         let lines = vec![
             Line::from(Span::styled(
                 format!(" {}", source.to_uppercase()),
-                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
             )),
-            Line::from(Span::styled("  — no data", Style::default().fg(theme.inactive_fg))),
+            Line::from(Span::styled(
+                "  — no data",
+                Style::default().fg(theme.inactive_fg),
+            )),
             Line::from(Span::styled(hint, Style::default().fg(theme.graph_text))),
         ];
         f.render_widget(Paragraph::new(lines), area);
@@ -104,12 +126,18 @@ fn draw_source_column(
     let is_stale = ago_secs.is_some_and(|s| s > STALE_SECS);
 
     let fresh_str = ago_secs.map(format_ago).unwrap_or_default();
-    let fresh_color = if is_stale { theme.inactive_fg } else { theme.graph_text };
+    let fresh_color = if is_stale {
+        theme.inactive_fg
+    } else {
+        theme.graph_text
+    };
 
     let mut lines: Vec<Line> = Vec::new();
     let mut label_spans = vec![Span::styled(
         format!(" {}", rl.source.to_uppercase()),
-        Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.title)
+            .add_modifier(Modifier::BOLD),
     )];
     if !fresh_str.is_empty() {
         label_spans.push(Span::styled(fresh_str, Style::default().fg(fresh_color)));
@@ -118,26 +146,44 @@ fn draw_source_column(
 
     if let Some(used_pct) = rl.five_hour_pct {
         let remaining = (100.0 - used_pct).clamp(0.0, 100.0);
-        let reset = rl.five_hour_resets_at.map(format_reset_time).unwrap_or_default();
+        let reset = rl
+            .five_hour_resets_at
+            .map(format_reset_time)
+            .unwrap_or_default();
         let c = grad_at(cpu_grad, used_pct);
         let mut s = vec![styled_label(" 5h ", theme.graph_text)];
         s.extend(remaining_bar(remaining, bar_w, cpu_grad, theme.meter_bg));
-        s.push(Span::styled(format!(" {:>3.0}%", remaining), Style::default().fg(c)));
+        s.push(Span::styled(
+            format!(" {:>3.0}%", remaining),
+            Style::default().fg(c),
+        ));
         lines.push(Line::from(s));
         if !reset.is_empty() {
-            lines.push(Line::from(Span::styled(format!("  {}", reset), Style::default().fg(theme.graph_text))));
+            lines.push(Line::from(Span::styled(
+                format!("  {}", reset),
+                Style::default().fg(theme.graph_text),
+            )));
         }
     }
     if let Some(used_pct) = rl.seven_day_pct {
         let remaining = (100.0 - used_pct).clamp(0.0, 100.0);
-        let reset = rl.seven_day_resets_at.map(format_reset_time).unwrap_or_default();
+        let reset = rl
+            .seven_day_resets_at
+            .map(format_reset_time)
+            .unwrap_or_default();
         let c = grad_at(cpu_grad, used_pct);
         let mut s = vec![styled_label(" 7d ", theme.graph_text)];
         s.extend(remaining_bar(remaining, bar_w, cpu_grad, theme.meter_bg));
-        s.push(Span::styled(format!(" {:>3.0}%", remaining), Style::default().fg(c)));
+        s.push(Span::styled(
+            format!(" {:>3.0}%", remaining),
+            Style::default().fg(c),
+        ));
         lines.push(Line::from(s));
         if !reset.is_empty() {
-            lines.push(Line::from(Span::styled(format!("  {}", reset), Style::default().fg(theme.graph_text))));
+            lines.push(Line::from(Span::styled(
+                format!("  {}", reset),
+                Style::default().fg(theme.graph_text),
+            )));
         }
     }
 

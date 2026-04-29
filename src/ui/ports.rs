@@ -19,25 +19,26 @@ pub(crate) fn draw_ports_panel(f: &mut Frame, app: &App, area: Rect, theme: &The
         };
         for child in &session.children {
             if let Some(port) = child.port {
-                all_ports.push((
-                    port,
-                    session.project_name.clone(),
-                    sid_short.to_string(),
-                ));
+                all_ports.push((port, session.project_name.clone(), sid_short.to_string()));
             }
         }
     }
     all_ports.sort_by_key(|p| p.0);
 
-    let mut port_counts: std::collections::HashMap<u16, usize> =
-        std::collections::HashMap::new();
+    let mut port_counts: std::collections::HashMap<u16, usize> = std::collections::HashMap::new();
     for (port, _, _) in &all_ports {
         *port_counts.entry(*port).or_default() += 1;
     }
 
-    let proc_grad = make_gradient(theme.proc_grad.start, theme.proc_grad.mid, theme.proc_grad.end);
+    let proc_grad = make_gradient(
+        theme.proc_grad.start,
+        theme.proc_grad.mid,
+        theme.proc_grad.end,
+    );
 
-    let header_style = Style::default().fg(theme.main_fg).add_modifier(Modifier::BOLD);
+    let header_style = Style::default()
+        .fg(theme.main_fg)
+        .add_modifier(Modifier::BOLD);
     let mut lines = vec![Line::from(vec![
         Span::styled(" PORT  ", header_style),
         Span::styled("SESSION", header_style),
@@ -62,7 +63,10 @@ pub(crate) fn draw_ports_panel(f: &mut Frame, app: &App, area: Rect, theme: &The
     for orphan in &app.orphan_ports {
         let session_label = format!("{} ⚠orphan", orphan.project_name);
         lines.push(Line::from(vec![
-            Span::styled(format!(" :{:<5}", orphan.port), Style::default().fg(orphan_color)),
+            Span::styled(
+                format!(" :{:<5}", orphan.port),
+                Style::default().fg(orphan_color),
+            ),
             Span::styled(session_label, Style::default().fg(orphan_color)),
         ]));
     }
