@@ -11,7 +11,7 @@ pub(crate) fn draw_token_monitor_overlay(f: &mut Frame, app: &App, theme: &Theme
     let area = f.area();
 
     let popup_w = 76u16.min(area.width.saturating_sub(4));
-    let popup_h = 20u16.min(area.height.saturating_sub(4));
+    let popup_h = 22u16.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_w)) / 2;
     let y = (area.height.saturating_sub(popup_h)) / 2;
     let popup = Rect::new(x, y, popup_w, popup_h);
@@ -103,6 +103,31 @@ pub(crate) fn draw_token_monitor_overlay(f: &mut Frame, app: &App, theme: &Theme
     lines.push(Line::from(""));
     lines.extend(field_lines(app, selected, theme));
     lines.push(Line::from(""));
+
+    // Stats line: total records / total tokens, and last report result
+    let tokens_str = format_tokens(status.total_tokens_sent);
+    let stats_text = if !status.last_error.is_empty() {
+        format!(
+            " 已上报 {} 条 / {} tokens  |  最近: ✗ {}",
+            status.total_sent, tokens_str, status.last_error
+        )
+    } else if status.total_sent > 0 {
+        let last_ok_short = if status.last_ok_at.len() > 19 {
+            &status.last_ok_at[..19]
+        } else {
+            &status.last_ok_at
+        };
+        format!(
+            " 已上报 {} 条 / {} tokens  |  最近: ✓ {}",
+            status.total_sent, tokens_str, last_ok_short
+        )
+    } else {
+        format!(" 暂无上报记录")
+    };
+    lines.push(Line::from(Span::styled(
+        stats_text,
+        Style::default().fg(theme.inactive_fg),
+    )));
 
     if !form.message.is_empty() {
         lines.push(Line::from(Span::styled(
@@ -234,4 +259,16 @@ fn button_line(field: AuthField, selected: AuthField, label: &str, theme: &Theme
     };
     let cursor = if is_selected { ">" } else { " " };
     Line::from(Span::styled(format!("{cursor} [{label}]"), style))
+}
+
+fn format_tokens(n: u64) -> String {
+    if n >= 1_000_000_000 {
+        format!("{:.1}B", n as f64 / 1_000_000_000.0)
+    } else if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }

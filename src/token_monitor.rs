@@ -163,6 +163,7 @@ pub struct ReporterStatus {
     pub queue_len: usize,
     pub total_sent: u64,
     pub total_failed: u64,
+    pub total_tokens_sent: u64,
     pub last_ok_at: String,
     pub last_error: String,
 }
@@ -408,7 +409,9 @@ impl TokenMonitorClient {
                 return Err(err);
             }
 
+            let tokens: u64 = batch.iter().map(|r| r.total_tokens).sum();
             self.status.total_sent += batch_len as u64;
+            self.status.total_tokens_sent += tokens;
             self.status.last_ok_at = Utc::now().to_rfc3339();
             self.status.last_error.clear();
         }
