@@ -134,6 +134,17 @@ impl AuthForm {
         }
     }
 
+    pub fn is_text_field(&self) -> bool {
+        matches!(
+            self.selected_field(),
+            AuthField::ServerUrl
+                | AuthField::Email
+                | AuthField::Password
+                | AuthField::Name
+                | AuthField::Department
+        )
+    }
+
     pub fn backspace(&mut self) {
         let target = match self.selected_field() {
             AuthField::ServerUrl => &mut self.server_url,

@@ -165,12 +165,32 @@ fn run_app(
                         }
                     } else if app.token_monitor_open {
                         match key.code {
-                            KeyCode::Esc | KeyCode::Char('m') => app.toggle_token_monitor(),
-                            KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-                                app.token_monitor_next()
+                            KeyCode::Esc => app.toggle_token_monitor(),
+                            KeyCode::Char('m') => {
+                                if app.token_monitor_is_text_field() {
+                                    app.token_monitor_input('m')
+                                } else {
+                                    app.toggle_token_monitor()
+                                }
                             }
-                            KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
-                                app.token_monitor_prev()
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                                app.toggle_token_monitor()
+                            }
+                            KeyCode::Down | KeyCode::Tab => app.token_monitor_next(),
+                            KeyCode::Char('j') => {
+                                if app.token_monitor_is_text_field() {
+                                    app.token_monitor_input('j')
+                                } else {
+                                    app.token_monitor_next()
+                                }
+                            }
+                            KeyCode::Up | KeyCode::BackTab => app.token_monitor_prev(),
+                            KeyCode::Char('k') => {
+                                if app.token_monitor_is_text_field() {
+                                    app.token_monitor_input('k')
+                                } else {
+                                    app.token_monitor_prev()
+                                }
                             }
                             KeyCode::Backspace => app.token_monitor_backspace(),
                             KeyCode::F(2) => app.token_monitor_toggle_mode(),

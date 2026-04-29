@@ -240,6 +240,10 @@ impl App {
         self.token_monitor_form.backspace();
     }
 
+    pub fn token_monitor_is_text_field(&self) -> bool {
+        self.token_monitor_form.is_text_field()
+    }
+
     pub fn token_monitor_input(&mut self, c: char) {
         self.token_monitor_form.edit_char(c);
     }
