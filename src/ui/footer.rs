@@ -16,8 +16,11 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Span::styled(&app.filter_text, Style::default().fg(theme.title)),
             Span::styled("_", Style::default().fg(theme.hi_fg)),
             Span::styled(
-                format!("  {}/{} sessions  (Esc clear, Enter keep)",
-                    visible_count, app.sessions.len()),
+                format!(
+                    "  {}/{} sessions  (Esc clear, Enter keep)",
+                    visible_count,
+                    app.sessions.len()
+                ),
                 Style::default().fg(theme.inactive_fg),
             ),
         ];
@@ -43,6 +46,8 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
     spans.push(Span::styled(" view ", Style::default().fg(theme.main_fg)));
     spans.push(Span::styled("c", Style::default().fg(theme.hi_fg)));
     spans.push(Span::styled(" config ", Style::default().fg(theme.main_fg)));
+    spans.push(Span::styled("m", Style::default().fg(theme.hi_fg)));
+    spans.push(Span::styled(" tokens ", Style::default().fg(theme.main_fg)));
     spans.push(Span::styled("?", Style::default().fg(theme.hi_fg)));
     spans.push(Span::styled(" help ", Style::default().fg(theme.main_fg)));
     spans.push(Span::styled("q", Style::default().fg(theme.hi_fg)));
@@ -55,13 +60,21 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
             Style::default().fg(theme.status_fg),
         ));
     } else {
-        let status_text = app.status_msg.as_ref()
+        let status_text = app
+            .status_msg
+            .as_ref()
             .filter(|(_, when)| when.elapsed().as_secs() < 3)
             .map(|(msg, _)| msg.as_str());
         if let Some(msg) = status_text {
-            spans.push(Span::styled(format!(" {msg} "), Style::default().fg(theme.status_fg)));
+            spans.push(Span::styled(
+                format!(" {msg} "),
+                Style::default().fg(theme.status_fg),
+            ));
         } else {
-            spans.push(Span::styled("2s auto", Style::default().fg(theme.inactive_fg)));
+            spans.push(Span::styled(
+                "2s auto",
+                Style::default().fg(theme.inactive_fg),
+            ));
         }
     }
 
@@ -79,7 +92,10 @@ pub(crate) fn draw_footer(f: &mut Frame, app: &App, area: Rect, theme: &Theme) {
         }
     };
     if let Some(ref peak) = peak_info {
-        spans.push(Span::styled(format!(" {peak} "), Style::default().fg(theme.warning_fg)));
+        spans.push(Span::styled(
+            format!(" {peak} "),
+            Style::default().fg(theme.warning_fg),
+        ));
     }
 
     let visible_count = app.visible_indices().len();

@@ -1,5 +1,7 @@
 use super::process::{self, ProcInfo};
-use crate::model::{AgentSession, ChildProcess, RateLimitInfo, SessionStatus, ToolCall};
+use crate::model::{
+    AgentSession, ChildProcess, RateLimitInfo, SessionStatus, ToolCall, UsageEvent,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -274,6 +276,7 @@ impl CodexCollector {
                 pending_since_ms: result.pending_since_ms,
                 thinking_since_ms: result.thinking_since_ms,
                 file_accesses: vec![],
+                usage_events: result.usage_events,
             },
             rate_limit,
         ))
@@ -399,6 +402,8 @@ struct CodexJSONLResult {
     pending_since_ms: u64,
     /// Timestamp of the latest user prompt not yet followed by assistant output.
     thinking_since_ms: u64,
+    /// Per-token_count usage events for external reporting.
+    usage_events: Vec<UsageEvent>,
 }
 
 fn event_timestamp_ms(val: &Value) -> Option<u64> {
@@ -550,6 +555,7 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
         tool_calls: Vec::new(),
         pending_since_ms: 0,
         thinking_since_ms: 0,
+        usage_events: Vec::new(),
     };
     let mut call_indices: HashMap<String, usize> = HashMap::new();
     let mut call_starts: HashMap<String, u64> = HashMap::new();
@@ -667,6 +673,32 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
                             result.last_context_tokens = inp + cache;
                             if result.token_history.len() < 10_000 {
                                 result.token_history.push(inp + out + cache);
+                            }
+                            if inp > 0 || out > 0 {
+                                let session_scope = if result.session_id.is_empty() {
+                                    path.file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("unknown-rollout")
+                                        .to_string()
+                                } else {
+                                    result.session_id.clone()
+                                };
+                                let request_time =
+                                    val["timestamp"].as_str().unwrap_or_default().to_string();
+                                result.usage_events.push(UsageEvent {
+                                    request_id: format!(
+                                        "codex:{}:{}",
+                                        session_scope,
+                                        result.usage_events.len() + 1
+                                    ),
+                                    model: result.model.clone(),
+                                    prompt_tokens: inp,
+                                    completion_tokens: out,
+                                    total_tokens: inp + out,
+                                    request_time,
+                                    source_app: "codex".to_string(),
+                                    endpoint: "local://codex/rollout".to_string(),
+                                });
                             }
                         }
                         // Context window may also appear inside info
@@ -868,6 +900,13 @@ fn parse_codex_jsonl(path: &Path) -> Option<CodexJSONLResult> {
     if !result.model_generating {
         result.thinking_since_ms = 0;
     }
+    if !result.model.is_empty() {
+        for event in &mut result.usage_events {
+            if event.model.is_empty() || event.model == "-" {
+                event.model = result.model.clone();
+            }
+        }
+    }
 
     Some(result)
 }
@@ -915,6 +954,15 @@ mod tests {
         assert_eq!(result.context_window, 128000);
         assert_eq!(result.token_history.len(), 1);
         assert_eq!(result.token_history[0], 80); // 50 + 20 + 10
+        assert_eq!(result.usage_events.len(), 1);
+        let event = &result.usage_events[0];
+        assert_eq!(event.model, "-");
+        assert_eq!(event.prompt_tokens, 50);
+        assert_eq!(event.completion_tokens, 20);
+        assert_eq!(event.total_tokens, 70);
+        assert_eq!(event.source_app, "codex");
+        assert_eq!(event.endpoint, "local://codex/rollout");
+        assert_eq!(event.request_id, "codex:sess-123:1");
     }
 
     #[test]

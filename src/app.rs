@@ -1,7 +1,9 @@
-use crate::collector::{MultiCollector, read_rate_limits};
+use crate::collector::{read_rate_limits, MultiCollector};
+use crate::config::TokenMonitorConfig;
 use crate::host_info::{AgentAggregate, HostMetrics, HostSampler};
 use crate::model::{AgentSession, OrphanPort, RateLimitInfo, SessionStatus};
 use crate::theme::Theme;
+use crate::token_monitor::{AuthField, AuthForm, TokenMonitorClient};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc;
 use std::time::Instant;
@@ -15,7 +17,8 @@ const MAX_SUMMARY_RETRIES: u32 = 2;
 
 /// Produce a terminal-safe fallback summary from a raw prompt.
 fn sanitize_fallback(prompt: &str, max_len: usize) -> String {
-    prompt.chars()
+    prompt
+        .chars()
         .filter(|c| !c.is_control() || *c == ' ')
         .take(max_len)
         .collect()
@@ -86,12 +89,22 @@ pub struct App {
     pub help_open: bool,
     /// View leader overlay (`v`) visibility.
     pub view_open: bool,
+    /// Tokens-Monitor auth/reporting overlay (`m`) visibility.
+    pub token_monitor_open: bool,
+    pub token_monitor_form: AuthForm,
+    pub token_monitor_client: TokenMonitorClient,
 }
 
 impl App {
-    pub fn new_with_hidden(theme: Theme, hidden_agents: &[String]) -> Self {
+    pub fn new_with_hidden(
+        theme: Theme,
+        hidden_agents: &[String],
+        token_monitor_cfg: TokenMonitorConfig,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let summaries = load_summary_cache();
+        let token_monitor_form = AuthForm::from_config(&token_monitor_cfg);
+        let token_monitor_client = TokenMonitorClient::new(token_monitor_cfg);
         Self {
             sessions: Vec::new(),
             selected: 0,
@@ -128,19 +141,42 @@ impl App {
             agent_aggregate: AgentAggregate::default(),
             help_open: false,
             view_open: false,
+            token_monitor_open: false,
+            token_monitor_form,
+            token_monitor_client,
         }
     }
 
     pub fn toggle_help(&mut self) {
         self.help_open = !self.help_open;
-        if self.help_open { self.view_open = false; }
+        if self.help_open {
+            self.view_open = false;
+            self.token_monitor_open = false;
+        }
     }
 
     pub fn toggle_view_menu(&mut self) {
         self.view_open = !self.view_open;
-        if self.view_open { self.help_open = false; }
+        if self.view_open {
+            self.help_open = false;
+            self.token_monitor_open = false;
+        }
     }
 
+    pub fn toggle_token_monitor(&mut self) {
+        self.token_monitor_open = !self.token_monitor_open;
+        self.token_monitor_form.open = self.token_monitor_open;
+        if self.token_monitor_open {
+            self.help_open = false;
+            self.view_open = false;
+            self.config_open = false;
+            let cfg = self.token_monitor_client.config().clone();
+            self.token_monitor_form.server_url = cfg.server_url;
+            self.token_monitor_form.email = cfg.user_id;
+            self.token_monitor_form.name = cfg.user_name;
+            self.token_monitor_form.department = cfg.department;
+        }
+    }
 
     pub fn toggle_panel(&mut self, panel: u8) {
         match panel {
@@ -161,6 +197,8 @@ impl App {
         self.config_open = !self.config_open;
         if self.config_open {
             self.config_selected = 0;
+            self.token_monitor_open = false;
+            self.token_monitor_form.open = false;
         }
     }
 
@@ -190,6 +228,105 @@ impl App {
         }
     }
 
+    pub fn token_monitor_next(&mut self) {
+        self.token_monitor_form.next();
+    }
+
+    pub fn token_monitor_prev(&mut self) {
+        self.token_monitor_form.prev();
+    }
+
+    pub fn token_monitor_backspace(&mut self) {
+        self.token_monitor_form.backspace();
+    }
+
+    pub fn token_monitor_input(&mut self, c: char) {
+        self.token_monitor_form.edit_char(c);
+    }
+
+    pub fn token_monitor_toggle_mode(&mut self) {
+        self.token_monitor_form.mode = self.token_monitor_form.mode.toggle();
+        self.token_monitor_form.on_mode_changed();
+        self.token_monitor_form.message.clear();
+    }
+
+    pub fn token_monitor_activate_selected(&mut self) {
+        match self.token_monitor_form.selected_field() {
+            AuthField::Submit => self.token_monitor_submit(),
+            AuthField::Enable => self.token_monitor_toggle_enabled(),
+            AuthField::ClearAuth => self.token_monitor_clear_auth(),
+            AuthField::ServerUrl
+            | AuthField::Email
+            | AuthField::Password
+            | AuthField::Name
+            | AuthField::Department => {}
+        }
+    }
+
+    pub fn token_monitor_submit(&mut self) {
+        match self
+            .token_monitor_client
+            .authenticate(&self.token_monitor_form)
+        {
+            Ok(()) => {
+                let cfg = self.token_monitor_client.config().clone();
+                if let Err(err) = crate::config::save_token_monitor(&cfg) {
+                    self.token_monitor_form.message = format!("登录成功，但保存配置失败: {err}");
+                    self.set_status("Tokens-Monitor 登录成功，但保存配置失败".to_string());
+                } else {
+                    self.token_monitor_form.message = format!(
+                        "{}成功：{}",
+                        self.token_monitor_form.mode.label(),
+                        self.token_monitor_client.auth_label()
+                    );
+                    self.set_status("Tokens-Monitor 已登录并启用上报".to_string());
+                }
+                self.token_monitor_form.clear_secret_fields();
+                self.token_monitor_form.email = cfg.user_id.clone();
+                self.token_monitor_form.name = cfg.user_name.clone();
+                self.token_monitor_form.department = cfg.department.clone();
+                self.token_monitor_form.server_url = cfg.server_url.clone();
+            }
+            Err(err) => {
+                self.token_monitor_form.message = err.clone();
+                self.set_status(format!("Tokens-Monitor 认证失败: {err}"));
+            }
+        }
+    }
+
+    pub fn token_monitor_toggle_enabled(&mut self) {
+        let enabled = !self.token_monitor_client.config().enabled;
+        self.token_monitor_client.set_enabled(enabled);
+        let cfg = self.token_monitor_client.config().clone();
+        if let Err(err) = crate::config::save_token_monitor(&cfg) {
+            self.token_monitor_form.message = format!("保存开关失败: {err}");
+            self.set_status("Tokens-Monitor 开关保存失败".to_string());
+            return;
+        }
+        self.token_monitor_form.message = if enabled {
+            "已启用 Tokens-Monitor 上报".to_string()
+        } else {
+            "已暂停 Tokens-Monitor 上报".to_string()
+        };
+        self.set_status(self.token_monitor_form.message.clone());
+    }
+
+    pub fn token_monitor_clear_auth(&mut self) {
+        self.token_monitor_client.clear_auth();
+        let cfg = self.token_monitor_client.config().clone();
+        if let Err(err) = crate::config::save_token_monitor(&cfg) {
+            self.token_monitor_form.message = format!("清除登录态失败: {err}");
+            self.set_status("Tokens-Monitor 登录态清除失败".to_string());
+            return;
+        }
+        self.token_monitor_form.email.clear();
+        self.token_monitor_form.password.clear();
+        self.token_monitor_form.name.clear();
+        self.token_monitor_form.department.clear();
+        self.token_monitor_form.message = "已清除 Tokens-Monitor 登录态".to_string();
+        self.set_status(self.token_monitor_form.message.clone());
+    }
+
     pub fn toggle_timeline(&mut self) {
         self.show_timeline = !self.show_timeline;
         self.timeline_scroll = 0;
@@ -197,7 +334,10 @@ impl App {
 
     pub fn cycle_theme(&mut self) {
         let names = crate::theme::THEME_NAMES;
-        let current = names.iter().position(|&n| n == self.theme.name).unwrap_or(0);
+        let current = names
+            .iter()
+            .position(|&n| n == self.theme.name)
+            .unwrap_or(0);
         let next = (current + 1) % names.len();
         self.theme = Theme::by_name(names[next]).unwrap_or_default();
         if let Err(e) = crate::config::save_theme(names[next]) {
@@ -212,12 +352,14 @@ impl App {
         self.status_msg = Some((msg, Instant::now()));
     }
 
-
     pub fn tick(&mut self) {
         self.sessions = self.collector.collect();
         self.orphan_ports = self.collector.orphan_ports.clone();
         self.host_metrics = self.host_sampler.sample();
         self.agent_aggregate = AgentAggregate::from_sessions(&self.sessions);
+        self.token_monitor_client
+            .collect_session_events(&self.sessions);
+        self.token_monitor_client.tick();
         if self.selected >= self.sessions.len() && !self.sessions.is_empty() {
             self.selected = self.sessions.len() - 1;
         }
@@ -282,7 +424,11 @@ impl App {
 
         // Spawn summary jobs for sessions that need one
         for s in &self.sessions {
-            let retries = self.summary_retries.get(&s.session_id).copied().unwrap_or(0);
+            let retries = self
+                .summary_retries
+                .get(&s.session_id)
+                .copied()
+                .unwrap_or(0);
             let has_input = !s.initial_prompt.is_empty() || !s.first_assistant_text.is_empty();
             if has_input
                 && !self.summaries.contains_key(&s.session_id)
@@ -297,7 +443,11 @@ impl App {
                 let tx = self.summary_tx.clone();
                 std::thread::spawn(move || {
                     let result = generate_summary(&prompt, &assistant_text);
-                    let fallback_text = if prompt.is_empty() { assistant_text } else { prompt };
+                    let fallback_text = if prompt.is_empty() {
+                        assistant_text
+                    } else {
+                        prompt
+                    };
                     let _ = tx.send((sid, fallback_text, result));
                 });
             }
@@ -314,7 +464,12 @@ impl App {
             (!s.initial_prompt.is_empty() || !s.first_assistant_text.is_empty())
                 && !self.summaries.contains_key(&s.session_id)
                 && !self.pending_summaries.contains(&s.session_id)
-                && self.summary_retries.get(&s.session_id).copied().unwrap_or(0) < MAX_SUMMARY_RETRIES
+                && self
+                    .summary_retries
+                    .get(&s.session_id)
+                    .copied()
+                    .unwrap_or(0)
+                    < MAX_SUMMARY_RETRIES
         })
     }
 
@@ -324,7 +479,9 @@ impl App {
             return (0..self.sessions.len()).collect();
         }
         let query = self.filter_text.to_lowercase();
-        self.sessions.iter().enumerate()
+        self.sessions
+            .iter()
+            .enumerate()
             .filter(|(_, s)| Self::session_matches(s, &query))
             .map(|(i, _)| i)
             .collect()
@@ -368,7 +525,9 @@ impl App {
 
     pub fn select_next(&mut self) {
         let visible = self.visible_indices();
-        if visible.is_empty() { return; }
+        if visible.is_empty() {
+            return;
+        }
         if let Some(pos) = visible.iter().position(|&i| i == self.selected) {
             if pos + 1 < visible.len() {
                 self.selected = visible[pos + 1];
@@ -380,7 +539,9 @@ impl App {
 
     pub fn select_prev(&mut self) {
         let visible = self.visible_indices();
-        if visible.is_empty() { return; }
+        if visible.is_empty() {
+            return;
+        }
         if let Some(pos) = visible.iter().position(|&i| i == self.selected) {
             if pos > 0 {
                 self.selected = visible[pos - 1];
@@ -427,7 +588,9 @@ impl App {
         }
 
         // First press — ask for confirmation
-        let name = self.summaries.get(&session.session_id)
+        let name = self
+            .summaries
+            .get(&session.session_id)
             .cloned()
             .unwrap_or_else(|| format!("PID {}", session.pid));
         self.kill_confirm = Some((self.selected, Instant::now()));
@@ -445,7 +608,8 @@ impl App {
 
         for orphan in &self.orphan_ports {
             // 1. Verify PID still listens on the expected port
-            let still_listening = fresh_ports.get(&orphan.pid)
+            let still_listening = fresh_ports
+                .get(&orphan.pid)
                 .is_some_and(|ports| ports.contains(&orphan.port));
             if !still_listening {
                 continue;
@@ -489,7 +653,12 @@ impl App {
 
     fn jump_via_tmux(&self, target_pid: u32) -> Option<String> {
         let output = std::process::Command::new("tmux")
-            .args(["list-panes", "-a", "-F", "#{pane_pid} #{session_name}:#{window_index}.#{pane_index}"])
+            .args([
+                "list-panes",
+                "-a",
+                "-F",
+                "#{pane_pid} #{session_name}:#{window_index}.#{pane_index}",
+            ])
             .output()
             .ok()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -546,7 +715,10 @@ impl App {
             let dots = match (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_millis() / 500) % 3 {
+                .as_millis()
+                / 500)
+                % 3
+            {
                 0 => ".",
                 1 => "..",
                 _ => "...",
@@ -574,7 +746,10 @@ fn generate_summary(prompt: &str, assistant_text: &str) -> Option<String> {
     let assistant_part: String = assistant_text.chars().take(200).collect();
 
     let context = if !user_part.is_empty() && !assistant_part.is_empty() {
-        format!("User message: {}\n\nAssistant response: {}", user_part, assistant_part)
+        format!(
+            "User message: {}\n\nAssistant response: {}",
+            user_part, assistant_part
+        )
     } else if !assistant_part.is_empty() {
         format!("Assistant response: {}", assistant_part)
     } else {
@@ -626,9 +801,7 @@ fn generate_summary(prompt: &str, assistant_text: &str) -> Option<String> {
 
     match result {
         Ok(output) if output.status.success() => {
-            let raw = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let lower = raw.to_lowercase();
             // Reject empty, too long, generic, or prompt-echo outputs
             if raw.is_empty()
@@ -669,9 +842,7 @@ fn load_summary_cache() -> HashMap<String, String> {
                 serde_json::from_str(&content).unwrap_or_default();
             // Purge polluted or old truncated-fallback entries so they regenerate
             let before = cache.len();
-            cache.retain(|_, v| {
-                !v.contains("You are a conversation tit") && !v.ends_with('…')
-            });
+            cache.retain(|_, v| !v.contains("You are a conversation tit") && !v.ends_with('…'));
             if cache.len() < before {
                 // Persist cleaned cache
                 let _ = std::fs::create_dir_all(cache_dir());
@@ -745,10 +916,7 @@ const RATE_LIMITED_PCT: f64 = 90.0;
 /// Promote Waiting sessions to RateLimited when a rate limit from the SAME
 /// agent CLI is over `RATE_LIMITED_PCT`. Matching on source avoids a
 /// Claude-only saturation freezing Codex sessions and vice versa.
-fn promote_waiting_to_rate_limited(
-    sessions: &mut [AgentSession],
-    rate_limits: &[RateLimitInfo],
-) {
+fn promote_waiting_to_rate_limited(sessions: &mut [AgentSession], rate_limits: &[RateLimitInfo]) {
     if rate_limits.is_empty() {
         return;
     }
@@ -806,6 +974,7 @@ mod tests {
             pending_since_ms: 0,
             thinking_since_ms: 0,
             file_accesses: vec![],
+            usage_events: vec![],
             git_added: 0,
             git_modified: 0,
         }

@@ -105,6 +105,19 @@ pub struct ToolCall {
     pub duration_ms: u64,
 }
 
+/// A single token-usage event that can be forwarded to external billing systems.
+#[derive(Debug, Clone)]
+pub struct UsageEvent {
+    pub request_id: String,
+    pub model: String,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub request_time: String,
+    pub source_app: String,
+    pub endpoint: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentSession {
     /// Which CLI tool this session belongs to: "claude", "codex", etc.
@@ -162,11 +175,16 @@ pub struct AgentSession {
     pub thinking_since_ms: u64,
     /// File access audit log: every file read/written/edited by the agent.
     pub file_accesses: Vec<FileAccess>,
+    /// Usage events extracted from the raw local transcript/rollout.
+    pub usage_events: Vec<UsageEvent>,
 }
 
 impl AgentSession {
     pub fn total_tokens(&self) -> u64 {
-        self.total_input_tokens + self.total_output_tokens + self.total_cache_read + self.total_cache_create
+        self.total_input_tokens
+            + self.total_output_tokens
+            + self.total_cache_read
+            + self.total_cache_create
     }
 
     /// Tokens that represent new work (input + output), excluding cache hits.
@@ -266,6 +284,7 @@ mod tests {
             pending_since_ms: 0,
             thinking_since_ms: 0,
             file_accesses: Vec::new(),
+            usage_events: Vec::new(),
         }
     }
 

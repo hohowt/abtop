@@ -8,23 +8,27 @@ use ratatui::Frame;
 const ENTRIES: &[(&str, &str)] = &[
     ("Navigation", ""),
     ("  ↑↓ / j k", "select session"),
-    ("  ↵",        "jump to tmux pane (when in tmux)"),
-    ("  /",        "filter sessions"),
-    ("  Esc",      "clear filter / close overlay"),
+    ("  ↵", "jump to tmux pane (when in tmux)"),
+    ("  /", "filter sessions"),
+    ("  Esc", "clear filter / close overlay"),
     ("Actions", ""),
-    ("  x",        "kill selected session"),
-    ("  X",        "kill orphan ports"),
-    ("  r",        "force refresh"),
-    ("  q",        "quit"),
+    ("  x", "kill selected session"),
+    ("  X", "kill orphan ports"),
+    ("  r", "force refresh"),
+    ("  q", "quit"),
     ("Views", ""),
-    ("  v",        "open view menu"),
-    ("  c",        "open config"),
-    ("  t / T",    "cycle theme / toggle tree"),
-    ("  l",        "toggle timeline"),
-    ("  f",        "toggle file audit"),
-    ("  1-5",      "toggle panels (context/quota/tokens/ports/sessions)"),
+    ("  v", "open view menu"),
+    ("  c", "open config"),
+    ("  m", "Tokens-Monitor auth/upload"),
+    ("  t / T", "cycle theme / toggle tree"),
+    ("  l", "toggle timeline"),
+    ("  f", "toggle file audit"),
+    (
+        "  1-5",
+        "toggle panels (context/quota/tokens/ports/sessions)",
+    ),
     ("Help", ""),
-    ("  ?",        "this help"),
+    ("  ?", "this help"),
 ];
 
 pub(crate) fn draw_help_overlay(f: &mut Frame, theme: &Theme) {
@@ -42,7 +46,9 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, theme: &Theme) {
         .title(
             Line::from(vec![Span::styled(
                 " Keybindings ",
-                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
             )])
             .alignment(Alignment::Center),
         )
@@ -63,7 +69,9 @@ pub(crate) fn draw_help_overlay(f: &mut Frame, theme: &Theme) {
         if desc.is_empty() {
             lines.push(Line::from(Span::styled(
                 (*key).to_string(),
-                Style::default().fg(theme.title).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.title)
+                    .add_modifier(Modifier::BOLD),
             )));
         } else {
             lines.push(Line::from(vec![
